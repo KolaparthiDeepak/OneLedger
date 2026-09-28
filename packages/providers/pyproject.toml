@@ -1,0 +1,19 @@
+[project]
+name = "oneledger-providers"
+version = "0.1.0"
+description = "Financial data provider contracts and statement importers"
+requires-python = ">=3.12"
+dependencies = [
+    "oneledger-domain",
+    "openpyxl>=3.1",
+    "pypdf>=5",
+    "defusedxml>=0.7",
+    "xlrd>=2.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oneledger_providers"]

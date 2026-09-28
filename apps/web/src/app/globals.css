@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+/*
+  OneLedger: a private passbook. Cool ruled paper, indigo passbook ink, figures set like a printed
+  statement. Ink is the action colour; green and red are reserved for money in and money out.
+*/
+:root {
+  --paper: #f3f4ef;
+  --surface: #ffffff;
+  --sunken: #eaece5;
+  --raised: #fbfbf8;
+  --ink: #15213a;
+  --ink-soft: #4b5567;
+  --ink-faint: #7a8291;
+  --rule: #dadcd3;
+  --rule-strong: #c3c7bc;
+  --accent: #15213a; /* primary actions */
+  --accent-ink: #f6f7f2;
+  --accent-wash: #e4e8f1;
+  --credit: #1d6a50;
+  --credit-wash: #e2efe8;
+  --debit: #b03a2e;
+  --debit-wash: #f7e6e2;
+  --review: #a4680a;
+  --review-wash: #fbf0dc;
+  --focus: #2f5bd3;
+  --shadow: 0 1px 0 rgb(21 33 58 / 0.04), 0 8px 24px -12px rgb(21 33 58 / 0.18);
+  --overlay: rgb(14 21 34 / 0.42);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e1522;
+    --surface: #151e2e;
+    --sunken: #0a101b;
+    --raised: #1a2436;
+    --ink: #e7ebe6;
+    --ink-soft: #b1bac6;
+    --ink-faint: #818c9b;
+    --rule: #263146;
+    --rule-strong: #34415a;
+    --accent: #dfe5f2;
+    --accent-ink: #0e1522;
+    --accent-wash: #1f2a40;
+    --credit: #5cc3a0;
+    --credit-wash: #15302a;
+    --debit: #eb8b7e;
+    --debit-wash: #3a211f;
+    --review: #efb65a;
+    --review-wash: #372a13;
+    --focus: #93b1ff;
+    --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.7);
+    --overlay: rgb(3 6 12 / 0.62);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #0e1522;
+  --surface: #151e2e;
+  --sunken: #0a101b;
+  --raised: #1a2436;
+  --ink: #e7ebe6;
+  --ink-soft: #b1bac6;
+  --ink-faint: #818c9b;
+  --rule: #263146;
+  --rule-strong: #34415a;
+  --accent: #dfe5f2;
+  --accent-ink: #0e1522;
+  --accent-wash: #1f2a40;
+  --credit: #5cc3a0;
+  --credit-wash: #15302a;
+  --debit: #eb8b7e;
+  --debit-wash: #3a211f;
+  --review: #efb65a;
+  --review-wash: #372a13;
+  --focus: #93b1ff;
+  --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.7);
+  --overlay: rgb(3 6 12 / 0.62);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-raised: var(--raised);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wash: var(--accent-wash);
+  --color-credit: var(--credit);
+  --color-credit-wash: var(--credit-wash);
+  --color-debit: var(--debit);
+  --color-debit-wash: var(--debit-wash);
+  --color-review: var(--review);
+  --color-review-wash: var(--review-wash);
+  --font-sans: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-newsreader), ui-serif, Georgia, serif;
+  --shadow-sheet: var(--shadow);
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Every amount: tabular lining figures so columns of money align. */
+.num {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Statement headings and headline figures. */
+.display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--accent-wash);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Dialogs rise into place when opened (a response to the person's action). */
+dialog[open] {
+  animation: sheet-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+dialog::backdrop {
+  background: var(--overlay);
+  backdrop-filter: blur(2px);
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* Ledger line: the dotted leader between a label and its amount, as in a passbook. */
+.leader {
+  flex: 1;
+  border-bottom: 1px dotted var(--rule-strong);
+  transform: translateY(-0.3em);
+  min-width: 1rem;
+}
+
+/* Disclosure rows use a chevron, not the browser triangle. */
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary .chev {
+  transition: transform 150ms ease;
+}
+details[open] > summary .chev {
+  transform: rotate(90deg);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* Native month/date inputs follow the theme. */
+input[type="date"],
+input[type="month"] {
+  color-scheme: inherit;
+}
+
+/* Page change: a quick settle-in after the person navigates. */
+.page-enter {
+  animation: page-in 160ms ease-out;
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
