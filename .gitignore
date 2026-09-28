@@ -1,0 +1,40 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data (your real ledger, backups, logs and screenshots never leave this machine)
+.data/
+*.sqlite
+*.sqlite3
+backups/
+*.dump
+*.log
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Next
+node_modules/
+apps/web/.next/
+apps/web/.next-lab/
+apps/web/out/
+apps/web/test-results/
+apps/web/playwright-report/
+*.tsbuildinfo
+next-env.d.ts
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+.codegraph/

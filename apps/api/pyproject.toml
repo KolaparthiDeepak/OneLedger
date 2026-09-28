@@ -1,0 +1,31 @@
+[project]
+name = "oneledger-api"
+version = "0.1.0"
+description = "OneLedger FastAPI service and job runner"
+requires-python = ">=3.12"
+dependencies = [
+    "oneledger-shared",
+    "oneledger-domain",
+    "oneledger-db",
+    "oneledger-providers",
+    "oneledger-categorization",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "argon2-cffi>=23.1",
+    "pyotp>=2.9",
+    "python-multipart>=0.0.12",
+    "httpx>=0.27",
+    "anthropic>=1.0",
+    "email-validator>=2.2",
+]
+
+[project.scripts]
+oneledger-admin = "oneledger_api.cli:main"
+oneledger-worker = "oneledger_api.worker:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oneledger_api"]

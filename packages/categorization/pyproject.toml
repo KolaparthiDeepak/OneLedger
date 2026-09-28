@@ -1,0 +1,16 @@
+[project]
+name = "oneledger-categorization"
+version = "0.1.0"
+description = "Deterministic transaction categorization for OneLedger"
+requires-python = ">=3.12"
+dependencies = [
+    "oneledger-domain",
+    "pydantic>=2.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oneledger_categorization"]
