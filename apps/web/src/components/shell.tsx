@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { useApi } from "@/lib/api";
+import { AlertsBell } from "./alerts";
 import { Icon, Mark, type IconName } from "./icons";
+import { QuickAddProvider, useQuickAdd } from "./quick-add-context";
 import { ThemeToggle } from "./theme-toggle";
 import { cx, Loading } from "./ui";
 
@@ -17,27 +19,59 @@ const NAV: { href: string; label: string; group: "main" | "wealth" | "plan" | "s
   { href: "/imports", label: "Import statements", group: "main", icon: "import" },
   { href: "/accounts", label: "Accounts", group: "main", icon: "accounts" },
   { href: "/assistant", label: "Ask", group: "main", icon: "ask" },
+  { href: "/stats", label: "Stats", group: "wealth", icon: "stats" },
   { href: "/net-worth", label: "Net worth", group: "wealth", icon: "networth" },
   { href: "/cards", label: "Credit cards", group: "wealth", icon: "cards" },
   { href: "/loans", label: "Loans", group: "wealth", icon: "loans" },
   { href: "/investments", label: "Investments", group: "wealth", icon: "investments" },
   { href: "/budgets", label: "Budgets & goals", group: "plan", icon: "budgets" },
-  { href: "/recurring", label: "Recurring", group: "plan", icon: "recurring" },
+  { href: "/recurring", label: "Recurring & bills", group: "plan", icon: "recurring" },
+  { href: "/people", label: "Shared with people", group: "plan", icon: "people" },
   { href: "/categories", label: "Categories & rules", group: "setup", icon: "categories" },
   { href: "/settings", label: "Settings", group: "setup", icon: "settings" },
 ];
 
-const MOBILE = ["/", "/transactions", "/imports", "/review"];
+const MOBILE_LEFT = ["/", "/transactions"];
+const MOBILE_RIGHT = ["/stats"];
 
 function active(path: string, href: string) {
   return href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
 }
 
+function useReviewCount() {
+  const { data } = useApi<Record<string, number>>("/review/counts", { dedupingInterval: 60_000 });
+  return data ? Object.values(data).reduce((a, b) => a + b, 0) : 0;
+}
+
 function ReviewCount() {
-  const { data } = useApi<Record<string, number>>("/analytics/dashboard", { dedupingInterval: 60_000 });
-  const counts = (data as unknown as { review_counts?: Record<string, number> } | undefined)?.review_counts;
-  const n = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0;
+  const n = useReviewCount();
   return n ? <span className="num ml-auto rounded-full bg-review-wash px-2 text-[11.5px] font-semibold leading-5 text-review">{n}</span> : null;
+}
+
+function AddButton() {
+  const add = useQuickAdd();
+  return (
+    <button type="button" onClick={() => add()} className="hidden min-h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-accent-ink hover:opacity-90 lg:inline-flex">
+      <Icon name="plus" className="size-4" />Add
+    </button>
+  );
+}
+
+function MobileAdd() {
+  const add = useQuickAdd();
+  return (
+    <div className="flex flex-1 items-start justify-center">
+      <button type="button" onClick={() => add()} aria-label="Add a transaction"
+        className="-mt-4 inline-flex size-14 items-center justify-center rounded-full bg-accent text-accent-ink shadow-sheet ring-4 ring-paper active:scale-95">
+        <Icon name="plus" className="size-6" strokeWidth={2.2} />
+      </button>
+    </div>
+  );
+}
+
+function MoreBadge() {
+  const n = useReviewCount();
+  return n ? <span className="num absolute right-[calc(50%-18px)] top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-review px-1 text-[10px] font-semibold text-surface">{n}</span> : null;
 }
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -105,6 +139,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const initials = me.display_name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "O";
 
   return (
+    <QuickAddProvider>
     <div className="lg:grid lg:grid-cols-[248px_1fr]">
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-surface focus:p-2">
         Skip to content
@@ -130,7 +165,11 @@ export function Shell({ children }: { children: ReactNode }) {
             <Mark className="size-6" />
             <span className="display text-lg font-semibold">OneLedger</span>
           </Link>
-          <ThemeToggle />
+          <div className="flex items-center gap-1.5">
+            <AddButton />
+            <AlertsBell />
+            <ThemeToggle />
+          </div>
         </header>
         <main id="main" className="min-w-0 px-4 pb-28 pt-5 sm:px-6 lg:px-10 lg:pb-16 lg:pt-0">
           <div className="mx-auto max-w-[1120px]">{children}</div>
@@ -138,20 +177,22 @@ export function Shell({ children }: { children: ReactNode }) {
       </div>
 
       <nav aria-label="Quick" className="fixed inset-x-0 bottom-0 z-30 flex border-t border-rule bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
-        {MOBILE.map((href) => {
+        {[...MOBILE_LEFT, "+", ...MOBILE_RIGHT].map((href) => {
+          if (href === "+") return <MobileAdd key="add" />;
           const item = NAV.find((n) => n.href === href)!;
           const on = active(path, href);
           return (
             <Link key={href} href={href} aria-current={on ? "page" : undefined}
               className={cx("flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11.5px]", on ? "font-semibold text-ink" : "text-ink-faint")}>
               <Icon name={item.icon} className="size-5" />
-              {item.label === "Import statements" ? "Import" : item.label}
+              {item.label}
             </Link>
           );
         })}
-        <button onClick={() => setMenu(true)} className="flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11.5px] text-ink-faint" aria-expanded={menu}>
+        <button onClick={() => setMenu(true)} className="relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11.5px] text-ink-faint" aria-expanded={menu}>
           <Icon name="more" className="size-5" strokeWidth={3} />
           More
+          <MoreBadge />
         </button>
       </nav>
 
@@ -170,5 +211,6 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       ) : null}
     </div>
+    </QuickAddProvider>
   );
 }

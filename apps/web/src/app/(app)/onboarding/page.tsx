@@ -15,8 +15,13 @@ export default function Onboarding() {
   const [step, setStep] = useState<1 | 2>(1);
   const [tz, setTz] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [wallet, setWallet] = useState(true);
 
   async function finish(next: string) {
+    if (wallet) {
+      // A cash wallet from today: ATM withdrawals from now on move into it instead of counting as spending.
+      await api("/accounts", { method: "POST", json: { name: "Cash", kind: "CASH", opening_date: new Date().toISOString().slice(0, 10), opening_balance: "0" } }).catch(() => undefined);
+    }
     await api("/me", { method: "PATCH", json: { onboarded: true } });
     await mutate("/me");
     router.replace(next);
@@ -44,6 +49,10 @@ export default function Onboarding() {
         <Panel title="Add your first account">
           <p className="mb-4 text-sm text-ink-soft">Start with the bank account you use most. You will import its statement next.</p>
           <AccountForm submitLabel="Add and import a statement" onDone={(id) => finish(`/imports?account=${id}`)} />
+          <label className="mt-4 flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={wallet} onChange={(e) => setWallet(e.target.checked)} />
+            <span>Also keep a cash wallet <span className="block text-xs text-ink-faint">ATM withdrawals move into it instead of counting as spending; add cash purchases with the + button.</span></span>
+          </label>
           <button className="mt-4 text-sm text-ink-soft underline" onClick={() => finish("/")}>Skip for now</button>
         </Panel>
       )}

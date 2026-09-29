@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from oneledger_db.models import (
+    Account,
     Anomaly,
     NetWorthSnapshot,
     RecurringTransaction,
@@ -13,16 +14,18 @@ from oneledger_db.models import (
     Transaction,
     TransactionAllocation,
     TransactionCategory,
+    Transfer,
+    TransferLeg,
     User,
 )
 from oneledger_domain import anomalies as an
 from oneledger_domain import recurrence as rc
-from oneledger_domain.enums import AllocationEffect
+from oneledger_domain.enums import AccountKind, AllocationEffect, TransferStatus
 from oneledger_domain.networth import CALCULATION_VERSION as NW_VERSION
 from oneledger_domain.periods import today_in
-from sqlalchemy import delete, select, update
+from sqlalchemy import case, delete, select, true, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from ..context import AppContext
 from .audit import current_ledger_revision
@@ -54,30 +57,68 @@ def _primary_rows(
     return [(t, a, code) for t, a, code in rows]
 
 
+def _transfer_counterparts(db: Session, alloc_ids: list[uuid.UUID]) -> dict[uuid.UUID, Account]:
+    """For allocations that are one leg of a confirmed transfer: the account on the other side."""
+    if not alloc_ids:
+        return {}
+    mine = aliased(TransferLeg)
+    other = aliased(TransferLeg)
+    rows = db.execute(
+        select(mine.allocation_id, Account)
+        .join(other, (other.transfer_id == mine.transfer_id) & (other.id != mine.id))
+        .join(Transfer, Transfer.id == mine.transfer_id)
+        .join(Transaction, Transaction.id == other.transaction_id)
+        .join(Account, Account.id == Transaction.account_id)
+        .where(
+            mine.allocation_id.in_(alloc_ids),
+            mine.is_active.is_(True),
+            other.is_active.is_(True),
+            Transfer.status == TransferStatus.CONFIRMED,
+        )
+    ).all()
+    return {aid: acct for aid, acct in rows}
+
+
+def _label(t: Transaction, merchant_key: str, counterpart: Account | None) -> str:
+    if counterpart is not None:
+        if counterpart.kind == AccountKind.CREDIT_CARD:
+            return f"Card bill: {counterpart.name}"
+        if counterpart.kind == AccountKind.LOAN:
+            return f"Loan payment: {counterpart.name}"
+        return f"Transfer to {counterpart.name}"
+    if t.merchant_name and t.merchant_name.upper() != t.merchant_name:
+        return t.merchant_name  # a name someone (or a pattern) wrote in mixed case is kept as is
+    return rc.display_label(merchant_key)
+
+
 def refresh_recurring(db: Session, owner_id: uuid.UUID, today: date) -> int:
     rows = _primary_rows(db, owner_id, today - timedelta(days=430))
+    legs = _transfer_counterparts(db, [a.id for _t, a, _c in rows])
+    # A transfer has two legs; only the money-out side is a recurring obligation. The receiving side
+    # (a card's "payment received", a savings account's incoming sweep) would list it twice.
+    rows = [(t, a, c) for t, a, c in rows if not (a.id in legs and t.amount > 0)]
     occ = [
         rc.Occurrence(t.id, t.account_id, t.transaction_date, t.amount, t.raw_description, t.merchant_name, code)
         for t, _a, code in rows
     ]
     patterns = rc.detect_recurring(occ)
-    currencies = {t.id: t.currency for t, _a, _c in rows}
-    cat_of = {t.id: a.category_id for t, a, _c in rows}
+    by_txn = {t.id: (t, a) for t, a, _c in rows}
     seen: set[str] = set()
     for p in patterns:
         seen.add(p.key)
-        label = p.merchant_key.title()
+        last_t, last_a = by_txn[p.occurrences[-1]]
+        label = _label(last_t, p.merchant_key, legs.get(last_a.id))
         values = dict(
             owner_id=owner_id,
             pattern_key=p.key,
             account_id=p.account_id,
             merchant_key=p.merchant_key,
             label=label,
-            category_id=cat_of.get(p.occurrences[-1]),
+            category_id=last_a.category_id,
             recurrence_type=p.recurrence_type,
             cadence=p.cadence,
             typical_amount=p.typical_amount,
-            currency=currencies[p.occurrences[-1]],
+            currency=last_t.currency,
             amount_variable=p.amount_variable,
             sample_count=len(p.occurrences),
             last_date=p.last_date,
@@ -87,11 +128,17 @@ def refresh_recurring(db: Session, owner_id: uuid.UUID, today: date) -> int:
             detection_version=rc.DETECTION_VERSION,
         )
         base = insert(RecurringTransaction).values(id=uuid.uuid4(), **values)
-        # Refresh detection fields but never overwrite the user's accept/dismiss decision.
+        # Refresh detection fields but never overwrite the user's accept/dismiss decision, and keep the
+        # name once the owner has confirmed (and possibly renamed) the item.
         stmt = base.on_conflict_do_update(
             index_elements=["owner_id", "pattern_key"],
             set_={k: base.excluded[k] for k in values if k not in ("owner_id", "pattern_key", "label")}
-            | {"updated_at": datetime.now(UTC)},
+            | {
+                "label": case(
+                    (RecurringTransaction.state == "SUGGESTED", base.excluded.label), else_=RecurringTransaction.label
+                ),
+                "updated_at": datetime.now(UTC),
+            },
         ).returning(RecurringTransaction.id)
         rid = db.execute(stmt).scalar_one()
         db.execute(delete(RecurringTransactionMember).where(RecurringTransactionMember.recurring_id == rid))
@@ -102,6 +149,15 @@ def refresh_recurring(db: Session, owner_id: uuid.UUID, today: date) -> int:
                 for tid in p.occurrences
             ],
         )
+    # Suggestions that no longer match anything (e.g. the receiving leg of a transfer) are dropped;
+    # items the owner confirmed or dismissed are kept.
+    stale = select(RecurringTransaction.id).where(
+        RecurringTransaction.owner_id == owner_id,
+        RecurringTransaction.state == "SUGGESTED",
+        RecurringTransaction.pattern_key.not_in(seen) if seen else true(),
+    )
+    db.execute(delete(RecurringTransactionMember).where(RecurringTransactionMember.recurring_id.in_(stale)))
+    db.execute(delete(RecurringTransaction).where(RecurringTransaction.id.in_(stale)))
     return len(seen)
 
 
@@ -187,6 +243,10 @@ def refresh_job(ctx: AppContext, job: ClaimedJob, deadline: float) -> None:
         tz = user.timezone if user else ctx.settings.default_timezone
         today = today_in(tz)
         n_rec = refresh_recurring(db, job.owner_id, today)
+        from .categories import load_context
+        from .products import sync_sip_contributions
+
+        sync_sip_contributions(db, job.owner_id, load_context(db, job.owner_id), actor="worker")
         n_anom = refresh_anomalies(db, job.owner_id, today)
         snapshot_net_worth(db, job.owner_id, today)
         finish(row, {"recurring": n_rec, "anomalies": n_anom})

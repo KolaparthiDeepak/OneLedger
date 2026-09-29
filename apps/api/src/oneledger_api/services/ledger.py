@@ -313,8 +313,17 @@ class SplitPart:
 
 
 def split_transaction(
-    db: Session, owner_id: uuid.UUID, txn: Transaction, parts: list[SplitPart], actor: str, cat: CategorizationContext
+    db: Session,
+    owner_id: uuid.UUID,
+    txn: Transaction,
+    parts: list[SplitPart],
+    actor: str,
+    cat: CategorizationContext,
+    *,
+    source: ClassificationSource = ClassificationSource.USER,
 ) -> list[TransactionAllocation]:
+    """Replace a transaction's allocations. ``source`` is SYSTEM for OneLedger's own automatic splits
+    (e.g. an EMI matched to a loan); those are still locked so rules never undo them."""
     if not 1 <= len(parts) <= 20:
         raise ValidationFailed("A split needs between 1 and 20 parts.", code="INVALID_SPLIT")
     for p in parts:
@@ -345,7 +354,7 @@ def split_transaction(
             amount=p.amount,
             effect=p.effect,
             category_id=p.category_id,
-            classification_source=ClassificationSource.USER,
+            classification_source=source,
             classification_confidence=Decimal("1"),
             is_locked=True,
             note=(p.note or None),

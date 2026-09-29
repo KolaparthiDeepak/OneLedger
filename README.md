@@ -14,6 +14,10 @@ finances through MCP.
   merchants and built-in Indian patterns (UPI notes, bills, merchants), then optional AI. Every
   transaction shows the statement row it came from and why it has its category. Tags, splits and
   bulk "set category" included.
+- **Day to day.** Quick add with a calculator and saved templates, a calendar of daily totals,
+  Stats by week/month/year with a cash-flow diagram, safe to spend until payday, bills coming up,
+  budgets with suggestions and carry-over, goals, alerts, shared bills with friends, receipt photos,
+  and an installable app for your phone's home screen.
 - **Private by design.** Invite-only accounts, row-level security in PostgreSQL, encrypted secrets
   and uploads, logs without financial data, AI off by default. Optional TOTP two-step sign-in
   (`REQUIRE_MFA=true`, required in production).
@@ -47,9 +51,9 @@ Whoever runs the server can read every ledger in the database, and one backup co
 ## Tests
 
 ```bash
-make test        # 124 backend tests against real PostgreSQL (database oneledger_test)
+make test        # 171 backend tests against real PostgreSQL (database oneledger_test)
 make lint typecheck
-make test-e2e    # 9 Playwright journeys: full stack on a throwaway oneledger_e2e database
+make test-e2e    # 18 Playwright journeys: full stack on a throwaway oneledger_e2e database
 ```
 
 Working on the UI? `./scripts/design_lab.sh` runs a hot-reloading copy (web :3010, API :8010) on
@@ -80,7 +84,7 @@ Tools: `get_accounts`, `get_account_balance`, `get_all_balances`, `get_transacti
 `search_transactions`, `get_income`, `get_expenses`, `get_spending_by_category`,
 `get_monthly_summary`, `compare_periods`, `get_cash_flow`, `get_recurring_transactions`,
 `get_loans`, `get_loan_summary`, `get_investments`, `get_net_worth`, `find_anomalies`,
-`get_financial_goals`. All read-only, enforced by the API. Granting a token lets that AI client
+`get_financial_goals`, `get_upcoming_bills`, `get_safe_to_spend`, `get_shared_balances`. All read-only, enforced by the API. Granting a token lets that AI client
 read your finances under its own data policy.
 
 The built-in assistant (Ask) is optional: set `AI_ENABLED=true` in `.env` and restart, then in

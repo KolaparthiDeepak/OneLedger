@@ -12,7 +12,11 @@ const PASSWORD = process.env.E2E_PASSWORD ?? "e2e-owner-password-123";
 
 const PAGES = [
   ["home", "/"],
-  ["transactions", "/transactions?start_date=2026-06-01&end_date_exclusive=2026-09-01"],
+  ["transactions", "/transactions?start_date=2026-08-01&end_date_exclusive=2026-09-01"],
+  ["calendar", "/transactions?view=calendar&start_date=2026-08-01&end_date_exclusive=2026-09-01"],
+  ["stats", "/stats?kind=month&anchor=2026-08-01"],
+  ["stats-flow", "/stats?kind=month&anchor=2026-08-01&tab=flow"],
+  ["people", "/people"],
   ["accounts", "/accounts"],
   ["imports", "/imports"],
   ["review", "/review"],
@@ -78,6 +82,16 @@ for (const v of VARIANTS) {
     await visit("account", "/accounts", 'main a[href^="/accounts/"]');
     await visit("loan", "/loans", 'main a[href^="/loans/"]');
     await visit("import", "/imports", 'main a[href^="/imports/"]');
+    // The Add sheet and a transaction's detail sheet.
+    await page.goto(`${BASE}/transactions?start_date=2026-08-01&end_date_exclusive=2026-09-01`);
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.getByRole("button", { name: /netflix/i }).first().click().catch(() => {});
+    await page.waitForTimeout(900);
+    await page.screenshot({ path: `${OUT}/sheet-transaction-${v.name}.png`, fullPage: false });
+    await page.keyboard.press("Escape");
+    await page.goto(`${BASE}/transactions?add=1`);
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: `${OUT}/sheet-add-${v.name}.png`, fullPage: false });
   }
   if (ONLY === "wizard") {
     await page.goto(`${BASE}/imports`);

@@ -26,6 +26,18 @@
   --focus: #2f5bd3;
   --shadow: 0 1px 0 rgb(21 33 58 / 0.04), 0 8px 24px -12px rgb(21 33 58 / 0.18);
   --overlay: rgb(14 21 34 / 0.42);
+  /* Category inks for charts: muted like printed statement colours, distinct in both themes. */
+  --cat-1: #2f5f8a;
+  --cat-2: #b5652b;
+  --cat-3: #2a7f7a;
+  --cat-4: #8a5a9e;
+  --cat-5: #b08a1f;
+  --cat-6: #b0475f;
+  --cat-7: #5b6b2e;
+  --cat-8: #4453a8;
+  --cat-9: #7a4b2a;
+  --cat-10: #66788a;
+  --cat-11: #8c8266;
   color-scheme: light;
 }
 
@@ -52,6 +64,17 @@
     --focus: #93b1ff;
     --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.7);
     --overlay: rgb(3 6 12 / 0.62);
+    --cat-1: #7fb0dc;
+    --cat-2: #e59a63;
+    --cat-3: #62c1b8;
+    --cat-4: #c29be0;
+    --cat-5: #e3c15a;
+    --cat-6: #e8849a;
+    --cat-7: #a9bb6c;
+    --cat-8: #96a3f0;
+    --cat-9: #c89770;
+    --cat-10: #a5b3c2;
+    --cat-11: #c2b89a;
     color-scheme: dark;
   }
 }
@@ -78,6 +101,17 @@
   --focus: #93b1ff;
   --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.7);
   --overlay: rgb(3 6 12 / 0.62);
+  --cat-1: #7fb0dc;
+  --cat-2: #e59a63;
+  --cat-3: #62c1b8;
+  --cat-4: #c29be0;
+  --cat-5: #e3c15a;
+  --cat-6: #e8849a;
+  --cat-7: #a9bb6c;
+  --cat-8: #96a3f0;
+  --cat-9: #c89770;
+  --cat-10: #a5b3c2;
+  --cat-11: #c2b89a;
   color-scheme: dark;
 }
 

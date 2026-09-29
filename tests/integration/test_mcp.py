@@ -31,6 +31,10 @@ def test_mcp_tools_list_and_call(api, client):
         tools = await server.list_tools()
         names = {t.name for t in tools}
         assert {"get_accounts", "get_transactions", "get_net_worth", "find_anomalies", "get_financial_goals"} <= names
+        assert {"get_upcoming_bills", "get_safe_to_spend", "get_shared_balances"} <= names
+        r = await server.call_tool("get_safe_to_spend", {})
+        safe = json.loads(r[0][0].text if isinstance(r, tuple) else r.content[0].text)
+        assert safe["available"] and safe["metrics"]
         assert all(t.annotations and t.annotations.read_only_hint for t in tools)
         result = await server.call_tool("get_spending_by_category", {"period": "2026-08"})
         return result

@@ -21,12 +21,13 @@ from oneledger_domain.enums import (
     ClassificationSource,
     ReviewKind,
     ReviewStatus,
+    TransactionSourceKind,
     TransactionStatus,
     TransferStatus,
 )
 from oneledger_domain.transfers import ALGORITHM_VERSION, Leg, match_transfers
 from oneledger_shared.errors import ConflictError, NotFoundError, ValidationFailed
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.orm import Session
 
 from .audit import audit, bump_ledger_revision
@@ -55,6 +56,8 @@ def _transfer_category(cat: CategorizationContext, a: Account, b: Account) -> tu
         return AllocationEffect.LOAN_PRINCIPAL, "LOANS_PRINCIPAL"
     if AccountKind.CREDIT_CARD in kinds:
         return AllocationEffect.TRANSFER, "TRANSFERS_CARD_PAYMENT"
+    if AccountKind.CASH in kinds and cat.category_id("TRANSFERS_CASH") is not None:
+        return AllocationEffect.TRANSFER, "TRANSFERS_CASH"
     return AllocationEffect.TRANSFER, "TRANSFERS_SELF"
 
 
@@ -439,3 +442,64 @@ def mark_external(db: Session, owner_id: uuid.UUID, review_id: uuid.UUID, actor:
     item.resolution = "external_confirmed"
     item.resolved_at = datetime.now(UTC)
     audit(db, owner_id, actor, "review.resolve", "review_item", item.id, ["status"])
+
+
+def reset_to_single_allocation(
+    db: Session, owner_id: uuid.UUID, txn: Transaction, cat: CategorizationContext, *, reason: str
+) -> None:
+    """Undo an automatic or derived split: void confirmed transfers on the transaction's allocations,
+    soft-delete the derived movements on the other side, and leave one ordinary allocation that is
+    re-categorised by the owner's rules."""
+    from oneledger_db.models import TransactionSource
+
+    from .ledger import allocations_of, recategorize
+
+    now = datetime.now(UTC)
+    allocs = allocations_of(db, txn.id, lock=True)
+    transfers = list(
+        db.scalars(
+            select(Transfer)
+            .join(TransferLeg, TransferLeg.transfer_id == Transfer.id)
+            .where(
+                TransferLeg.allocation_id.in_([a.id for a in allocs]),
+                TransferLeg.is_active.is_(True),
+                Transfer.status == TransferStatus.CONFIRMED,
+            )
+        ).unique()
+    )
+    for tr in transfers:
+        legs = list(db.scalars(select(TransferLeg).where(TransferLeg.transfer_id == tr.id)))
+        for leg in legs:
+            leg.is_active = False
+        tr.status, tr.decided_by = TransferStatus.REJECTED, "system"
+        tr.evidence = {**tr.evidence, "voided": reason}
+        db.flush()
+        _restore_previous(db, owner_id, tr, cat)
+        for leg in legs:
+            other = db.get(Transaction, leg.transaction_id)
+            if other is not None and other.id != txn.id and other.source == TransactionSourceKind.MANUAL_DERIVED:
+                other.deleted_at = now
+                other.version += 1
+                db.execute(
+                    update(TransactionSource)
+                    .where(TransactionSource.transaction_id == other.id)
+                    .values(is_active=False)
+                )
+    for a in allocs:
+        db.delete(a)
+    db.flush()
+    db.add(
+        TransactionAllocation(
+            id=uuid.uuid4(),
+            owner_id=owner_id,
+            transaction_id=txn.id,
+            amount=txn.amount,
+            effect=AllocationEffect.UNCLASSIFIED,
+            classification_source=ClassificationSource.FALLBACK,
+            position=0,
+        )
+    )
+    txn.version += 1
+    db.flush()
+    recategorize(db, owner_id, [txn], cat)
+    bump_ledger_revision(db, owner_id)

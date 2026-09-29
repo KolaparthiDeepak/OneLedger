@@ -55,7 +55,7 @@ test("credit card: purchases count once, bill payments match the bank", async ({
   await page.screenshot({ path: `${SHOTS}/cards.png`, fullPage: true });
 });
 
-test("loan: EMI splits into principal and interest", async ({ page }) => {
+test("loan: EMIs already on the statement are matched and split; lender figures replace the estimate", async ({ page }) => {
   await signIn(page);
   await page.goto("/loans");
   await page.getByRole("button", { name: "Add loan" }).first().click();
@@ -73,17 +73,29 @@ test("loan: EMI splits into principal and interest", async ({ page }) => {
   await page.getByRole("link", { name: "Details" }).first().click();
   await expect(page.getByRole("heading", { name: /SBI/ })).toBeVisible();
 
-  const option = page.getByLabel("Bank debit that paid it").locator("option", { hasText: "5 Jun 2026" });
-  await page.getByLabel("Bank debit that paid it").selectOption({ label: (await option.first().textContent())!.trim() });
-  await page.getByRole("textbox", { name: "Principal" }).fill("4500");
-  await page.getByRole("textbox", { name: "Interest", exact: true }).fill("17000");
-  await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.getByRole("cell", { name: "₹4,500.00" })).toBeVisible();
+  // The Jun, Jul and Aug EMIs from the bank statement were matched when the loan was added.
+  const payments = page.locator("section", { has: page.getByRole("heading", { name: "Payments recorded" }) });
+  await expect(payments.getByText("Matched automatically, estimated")).toHaveCount(3);
+  const june = payments.getByRole("listitem").filter({ hasText: "5 Jun 2026" });
+  await june.getByRole("button", { name: "Enter lender figures" }).click();
+  await june.getByRole("textbox", { name: "Principal" }).fill("4500");
+  await june.getByRole("textbox", { name: "Interest" }).fill("17000");
+  await june.getByRole("button", { name: "Save" }).click();
+  await expect(june.getByText("Lender figures")).toBeVisible();
+  await expect(june).toContainText("₹4,500.00");
+
+  // Only interest counts as spending: August's "Loans" spending is the interest part, not the EMI.
+  const aug = await page.evaluate(async () => {
+    const r = await (await fetch("/api/bff/analytics/categories?start_date=2026-08-01&end_date_exclusive=2026-09-01")).json();
+    return (r.data.categories as { code: string; amount: string }[]).find((c) => c.code === "LOANS")?.amount;
+  });
+  expect(Number(aug)).toBeLessThan(21500);
+  expect(Number(aug)).toBeGreaterThan(15000);
 
   await page.getByRole("textbox", { name: "Amount", exact: true }).fill("200000");
   await page.getByLabel("On", { exact: true }).fill("2026-10-05");
   await page.getByRole("button", { name: "Simulate" }).click();
-  await expect(page.getByText(/Interest saved/)).toBeVisible();
+  await expect(page.getByText(/in interest/)).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/loan.png`, fullPage: true });
 });
 

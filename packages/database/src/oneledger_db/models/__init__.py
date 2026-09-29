@@ -1,5 +1,6 @@
 """All ORM models; importing this module registers every table on ``Base.metadata``."""
 
+from .extras import AlertDismissal, Person, TransactionAttachment, TransactionTemplate
 from .identity import (
     AiRun,
     AiSettings,
@@ -61,6 +62,7 @@ __all__ = [
     "Account",
     "AiRun",
     "AiSettings",
+    "AlertDismissal",
     "Anomaly",
     "ApiToken",
     "AuditLog",
@@ -87,6 +89,7 @@ __all__ = [
     "LoanPayment",
     "LoanRateChange",
     "NetWorthSnapshot",
+    "Person",
     "RateLimitCounter",
     "RecurringTransaction",
     "RecurringTransactionMember",
@@ -94,6 +97,7 @@ __all__ = [
     "ReviewItem",
     "Transaction",
     "TransactionAllocation",
+    "TransactionAttachment",
     "TransactionCategory",
     "TransactionCategoryRule",
     "TransactionMerchant",
@@ -102,6 +106,7 @@ __all__ = [
     "TransactionSource",
     "TransactionTag",
     "TransactionTagLink",
+    "TransactionTemplate",
     "Transfer",
     "TransferLeg",
     "User",

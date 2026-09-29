@@ -3,11 +3,14 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import useSWRInfinite from "swr/infinite";
-import { CategoryOptions, TxnList, TxnSheet, useCategories, type Txn } from "@/components/transactions";
+import { CategoryOptions, TxnList, TxnSheet, useCategories, type DayTotal, type Txn } from "@/components/transactions";
 import { Icon } from "@/components/icons";
-import { Button, cx, Empty, ErrorNote, Field, Input, Loading, PageHeader, Select, Sheet } from "@/components/ui";
+import { useQuickAdd } from "@/components/quick-add-context";
+import { Amount, Button, cx, Empty, ErrorNote, Field, Input, Loading, PageHeader, Select } from "@/components/ui";
 import { api, ApiError, useApi } from "@/lib/api";
-import { todayISO } from "@/lib/format";
+import { formatDate, formatMoney, formatMonth, todayISO } from "@/lib/format";
+import { moneyIn, spent } from "@/lib/money";
+import { daysOf, periodFor, shiftMonth } from "@/lib/period";
 
 type Page = { items: Txn[]; next_cursor: string | null; evidence: { kind: string; ledger_changed_since: boolean; params: Record<string, unknown> } | null };
 type Account = { id: string; name: string; currency: string };
@@ -21,8 +24,17 @@ function Explorer() {
   const { data: accounts } = useApi<Account[]>("/accounts");
   const { data: tags } = useApi<{ id: string; name: string }[]>("/tags");
   const [open, setOpen] = useState<string | null>(params.get("open"));
-  const [adding, setAdding] = useState(false);
+  const add = useQuickAdd();
   const [showFilters, setShowFilters] = useState(false);
+  const view = params.get("view") === "calendar" ? "calendar" : "list";
+  // The installed app's "Add a transaction" shortcut lands here with ?add=1.
+  useEffect(() => {
+    if (params.get("add") !== "1") return;
+    add();
+    const u = new URLSearchParams(params.toString());
+    u.delete("add");
+    router.replace(`/transactions${u.toString() ? `?${u}` : ""}`);
+  }, [params, add, router]);
 
   const filterQuery = useMemo(() => {
     const u = new URLSearchParams();
@@ -38,7 +50,21 @@ function Explorer() {
     (p: string) => api<Page>(p),
     { revalidateOnFocus: false },
   );
+  useEffect(() => {
+    const refresh = () => void mutate();
+    window.addEventListener("ol:ledger-changed", refresh);
+    return () => window.removeEventListener("ol:ledger-changed", refresh);
+  }, [mutate]);
   const items = data?.flatMap((p) => p.items) ?? [];
+  // Day subtotals use the same definitions as the monthly summary; only shown when the list is not
+  // narrowed by category, amount or other filters (the subtotal would then not match the rows).
+  const narrowing = FILTER_KEYS.filter((k) => !["sort", "start_date", "end_date_exclusive", "account_id"].includes(k) && params.get(k)).length > 0;
+  const dayRange = items.length ? { start: items.reduce((m, t) => (t.transaction_date < m ? t.transaction_date : m), items[0]!.transaction_date), end: items.reduce((m, t) => (t.transaction_date > m ? t.transaction_date : m), items[0]!.transaction_date) } : null;
+  const accountParam = params.get("account_id");
+  const { data: daily } = useApi<{ days: ({ date: string } & DayTotal)[] }>(
+    !narrowing && dayRange ? `/analytics/daily?start_date=${dayRange.start}&end_date_exclusive=${nextDay(dayRange.end)}${accountParam ? `&account_id=${accountParam}` : ""}` : null,
+  );
+  const dayTotals = useMemo(() => Object.fromEntries((daily?.days ?? []).map((d) => [d.date, d])), [daily]);
   const evidence = data?.[0]?.evidence;
   const hasMore = !!data?.[data.length - 1]?.next_cursor;
 
@@ -57,7 +83,8 @@ function Explorer() {
     e.preventDefault();
     setFilter("q", q.trim());
   }
-  const active = FILTER_KEYS.filter((k) => k !== "sort" && k !== "q" && params.get(k)).length;
+  // The month bar shows the dates, so they don't count as a filter here.
+  const active = FILTER_KEYS.filter((k) => !["sort", "q", "start_date", "end_date_exclusive"].includes(k) && params.get(k)).length;
   const [picked, setPicked] = useState<Set<string> | null>(null);
   const { data: aiSettings } = useApi<{ auto_categorize_ready: boolean }>("/ai/settings");
   const onlyUncategorised = params.get("uncategorized") === "1" || params.get("uncategorized") === "true";
@@ -84,7 +111,19 @@ function Explorer() {
 
   return (
     <>
-      <PageHeader title="Transactions" description="Every movement across your accounts. Open one to categorise, split or link it." actions={<Button variant="primary" onClick={() => setAdding(true)}><Icon name="plus" className="size-4" />Add transaction</Button>} />
+      <PageHeader title="Transactions" description="Every movement across your accounts. Open one to categorise, split, share or attach a receipt." actions={
+        <>
+          <div role="tablist" aria-label="View" className="inline-flex rounded-lg border border-rule bg-surface p-0.5">
+            {(["list", "calendar"] as const).map((v) => (
+              <button key={v} role="tab" type="button" aria-selected={view === v} onClick={() => setFilter("view", v === "list" ? "" : v)}
+                className={cx("inline-flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium", view === v ? "bg-accent text-accent-ink" : "text-ink-soft hover:text-ink")}>
+                <Icon name={v} className="size-4" />{v === "list" ? "List" : "Calendar"}
+              </button>
+            ))}
+          </div>
+        </>
+      } />
+      <MonthBar params={params} setRange={(start, end) => { const u = new URLSearchParams(params.toString()); if (start) { u.set("start_date", start); u.set("end_date_exclusive", end!); } else { u.delete("start_date"); u.delete("end_date_exclusive"); } u.delete("open"); u.delete("query_id"); router.replace(`/transactions?${u.toString()}`); }} />
       {evidence ? (
         <div className="mb-4 rounded-xl border border-rule bg-accent-wash px-4 py-2.5 text-sm text-ink-soft">
           Showing the transactions behind a report ({evidence.kind.replace("_", " ")}).
@@ -92,6 +131,7 @@ function Explorer() {
           <button className="ml-2 underline" onClick={() => router.replace("/transactions")}>Clear</button>
         </div>
       ) : null}
+      {view === "list" ? <>
       <form onSubmit={search} className="mb-4 flex gap-2" role="search">
         <div className="relative flex-1">
           <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 size-[18px] -translate-y-1/2 text-ink-faint" />
@@ -103,18 +143,18 @@ function Explorer() {
         </Button>
       </form>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-1.5">
+        <div role="group" aria-label="Quick filters" className="-mx-4 flex min-w-0 flex-1 gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
           {QUICK.map((f) => {
             const on = quickActive(f.set);
             return (
               <button key={f.label} type="button" aria-pressed={on} onClick={() => applyQuick(f.set)}
-                className={cx("rounded-full border px-3 py-1 text-sm transition-colors", on ? "border-ink bg-accent font-medium text-accent-ink" : "border-rule bg-surface text-ink-soft hover:border-ink-faint hover:text-ink")}>
+                className={cx("shrink-0 rounded-full border px-3 py-1 text-sm transition-colors", on ? "border-ink bg-accent font-medium text-accent-ink" : "border-rule bg-surface text-ink-soft hover:border-ink-faint hover:text-ink")}>
                 {f.label}
               </button>
             );
           })}
         </div>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex shrink-0 gap-2">
           {onlyUncategorised && aiSettings?.auto_categorize_ready ? <AiCategorise onQueued={() => setTimeout(() => mutate(), 8000)} /> : null}
           <Button size="sm" variant={picked ? "secondary" : "ghost"} onClick={() => setPicked(picked ? null : new Set())} aria-pressed={!!picked}>{picked ? "Done selecting" : "Select"}</Button>
         </div>
@@ -179,19 +219,21 @@ function Explorer() {
         </div>
       ) : null}
 
-      {error ? <ErrorNote error={error} onRetry={() => mutate()} /> : isLoading ? <Loading /> : items.length === 0 ? (
-        <Empty title="No transactions match">Change the filters, or import a statement to add transactions.</Empty>
+      </> : null}
+      {view === "calendar" ? (
+        <CalendarView params={params} onOpen={(id) => setOpen(id)} />
+      ) : error ? <ErrorNote error={error} onRetry={() => mutate()} /> : isLoading ? <Loading /> : items.length === 0 ? (
+        <Empty title="No transactions match" action={<Button onClick={() => add()}><Icon name="plus" className="size-4" />Add one by hand</Button>}>Change the filters, or import a statement to add transactions.</Empty>
       ) : (
-        <div className={cx("overflow-clip rounded-xl border border-rule bg-surface px-5 sm:px-6", picked && "mb-40")}>
-          <TxnList items={items} onOpen={(t) => setOpen(t.id)} selected={picked ?? undefined}
+        <div className={cx("overflow-clip rounded-xl border border-rule bg-surface px-4 sm:px-6", picked && "mb-40")}>
+          <TxnList items={items} onOpen={(t) => setOpen(t.id)} selected={picked ?? undefined} dayTotals={narrowing ? undefined : dayTotals}
             onToggle={picked ? (t) => setPicked((cur) => { const n = new Set(cur); if (n.has(t.id)) n.delete(t.id); else n.add(t.id); return n; }) : undefined} />
         </div>
       )}
-      {hasMore ? <div className="mt-5 flex justify-center"><Button onClick={() => setSize(size + 1)}>Show older transactions</Button></div> : null}
+      {view === "list" && hasMore ? <div className="mt-5 flex justify-center"><Button onClick={() => setSize(size + 1)}>Show older transactions</Button></div> : null}
 
       {picked && picked.size ? <BulkBar ids={[...picked]} onDone={() => { setPicked(null); mutate(); }} onClear={() => setPicked(new Set())} /> : null}
       <TxnSheet id={open} onClose={() => setOpen(null)} onChanged={() => mutate()} />
-      <AddTxn open={adding} onClose={() => setAdding(false)} accounts={accounts ?? []} onDone={() => { setAdding(false); mutate(); }} />
     </>
   );
 }
@@ -236,57 +278,128 @@ function AiCategorise({ onQueued }: { onQueued: () => void }) {
   );
 }
 
-function AddTxn({ open, onClose, accounts, onDone }: { open: boolean; onClose: () => void; accounts: Account[]; onDone: () => void }) {
-  const { data: cats } = useCategories();
-  const [f, setF] = useState({ account_id: "", direction: "out", amount: "", date: todayISO(), description: "", category_id: "" });
-  const [err, setErr] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      await api("/transactions", {
-        method: "POST",
-        headers: { "idempotency-key": crypto.randomUUID() },
-        json: { account_id: f.account_id, amount: f.direction === "out" ? `-${f.amount}` : f.amount, transaction_date: f.date, description: f.description, category_id: f.category_id || null },
-      });
-      setF({ ...f, amount: "", description: "" });
-      onDone();
-    } catch (e2) {
-      setErr(e2);
-    } finally {
-      setBusy(false);
-    }
+function nextDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function monthOf(params: URLSearchParams): string | null {
+  const s = params.get("start_date");
+  const e = params.get("end_date_exclusive");
+  if (!s || !e || s.slice(8) !== "01" || e.slice(8) !== "01" || shiftMonth(s.slice(0, 7), 1) !== e.slice(0, 7)) return null;
+  return s.slice(0, 7);
+}
+
+/** Month navigation with that month's totals (same definitions as Home). */
+function MonthBar({ params, setRange }: { params: URLSearchParams; setRange: (start: string | null, end?: string) => void }) {
+  const month = monthOf(params);
+  const account = params.get("account_id");
+  const { data } = useApi<{ data: { income: string; net_expenses: string; unclassified_inflow: string; unclassified_outflow: string } }>(
+    month ? `/analytics/summary?start_date=${month}-01&end_date_exclusive=${shiftMonth(month, 1)}-01${account ? `&account_id=${account}` : ""}` : null,
+  );
+  const go = (m: string) => setRange(`${m}-01`, `${shiftMonth(m, 1)}-01`);
+  const btn = "inline-flex size-9 items-center justify-center rounded-lg text-ink-soft hover:bg-sunken hover:text-ink disabled:opacity-30";
+  if (!month) {
+    return (
+      <div className="mb-4 flex items-center gap-2 text-sm text-ink-soft">
+        <span>{params.get("start_date") || params.get("end_date_exclusive") ? "Custom dates" : "All dates"}</span>
+        <button type="button" onClick={() => go(todayISO().slice(0, 7))} className="rounded-full border border-rule bg-surface px-3 py-1 hover:border-ink-faint hover:text-ink">By month</button>
+      </div>
+    );
   }
+  const d = data?.data;
+  const inn = d ? moneyIn(d) : null;
+  const out = d ? spent(d) : null;
   return (
-    <Sheet open={open} onClose={onClose} title="Add a transaction">
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <p className="text-sm text-ink-soft">For cash and anything not on a statement. Imported transactions should come from statements so they can be de-duplicated.</p>
-        <Field label="Account">{(id) => (
-          <Select id={id} required value={f.account_id} onChange={(e) => setF({ ...f, account_id: e.target.value })}>
-            <option value="">Choose…</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </Select>
-        )}</Field>
-        <fieldset className="grid grid-cols-2 gap-1 rounded-xl bg-sunken p-1 text-sm">
-          <legend className="sr-only">Direction</legend>
-          <label className="flex cursor-pointer items-center justify-center rounded-lg py-2 font-medium text-ink-soft has-[:checked]:bg-surface has-[:checked]:text-debit has-[:checked]:shadow-sm"><input className="sr-only" type="radio" checked={f.direction === "out"} onChange={() => setF({ ...f, direction: "out" })} />Money out</label>
-          <label className="flex cursor-pointer items-center justify-center rounded-lg py-2 font-medium text-ink-soft has-[:checked]:bg-surface has-[:checked]:text-credit has-[:checked]:shadow-sm"><input className="sr-only" type="radio" checked={f.direction === "in"} onChange={() => setF({ ...f, direction: "in" })} />Money in</label>
-        </fieldset>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Amount">{(id) => <Input id={id} required inputMode="decimal" pattern="\d+(\.\d{1,2})?" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value.replace(/[^0-9.]/g, "") })} />}</Field>
-          <Field label="Date">{(id) => <Input id={id} type="date" required value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />}</Field>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-rule bg-surface px-2 py-1.5 sm:px-3">
+      <div className="flex items-center">
+        <button type="button" className={btn} onClick={() => go(shiftMonth(month, -1))} aria-label="Previous month"><Icon name="left" className="size-5" /></button>
+        <span className="display min-w-[8.5rem] text-center text-lg font-medium">{formatMonth(`${month}-01`)}</span>
+        <button type="button" className={btn} disabled={month >= todayISO().slice(0, 7)} onClick={() => go(shiftMonth(month, 1))} aria-label="Next month"><Icon name="right" className="size-5" /></button>
+        <button type="button" onClick={() => setRange(null)} className="ml-1 rounded-md px-2 py-1 text-xs text-ink-faint hover:bg-sunken hover:text-ink">All dates</button>
+      </div>
+      {d ? (
+        <dl className="num flex gap-4 px-2 text-sm">
+          <div><dt className="text-[11px] text-ink-faint">In</dt><dd className="font-medium text-credit">{formatMoney(inn, "INR", { decimals: false })}</dd></div>
+          <div><dt className="text-[11px] text-ink-faint">Out</dt><dd className="font-medium text-debit">{formatMoney(out, "INR", { decimals: false })}</dd></div>
+          <div><dt className="text-[11px] text-ink-faint">Net</dt><dd className="font-medium"><Amount value={subtract(inn!, out!)} decimals={false} /></dd></div>
+        </dl>
+      ) : null}
+    </div>
+  );
+}
+
+function subtract(a: string, b: string): string {
+  // Display-only: both are exact server strings with at most 8 decimals.
+  const scale = 100_000_000n;
+  const toUnits = (v: string) => {
+    const neg = v.startsWith("-");
+    const [i, f = ""] = v.replace(/^[-+]/, "").split(".");
+    const u = BigInt(i || "0") * scale + BigInt((f + "00000000").slice(0, 8));
+    return neg ? -u : u;
+  };
+  const r = toUnits(a) - toUnits(b);
+  const neg = r < 0n;
+  const abs = neg ? -r : r;
+  return `${neg ? "-" : ""}${abs / scale}.${(abs % scale).toString().padStart(8, "0")}`;
+}
+
+/** Month grid: each day shows money in and out; pick a day to see its transactions. */
+function CalendarView({ params, onOpen }: { params: URLSearchParams; onOpen: (id: string) => void }) {
+  const router = useRouter();
+  const month = monthOf(params) ?? todayISO().slice(0, 7);
+  const account = params.get("account_id");
+  const p = periodFor("month", `${month}-01`);
+  const { data } = useApi<{ days: ({ date: string; transaction_count: number } & DayTotal)[] }>(`/analytics/daily?start_date=${p.start}&end_date_exclusive=${p.endExclusive}${account ? `&account_id=${account}` : ""}`);
+  const [day, setDay] = useState<string | null>(null);
+  const { data: dayTx } = useApi<Page>(day ? `/transactions?limit=100&start_date=${day}&end_date_exclusive=${nextDay(day)}${account ? `&account_id=${account}` : ""}` : null);
+  useEffect(() => {
+    if (!monthOf(params)) {
+      const u = new URLSearchParams(params.toString());
+      u.set("start_date", p.start);
+      u.set("end_date_exclusive", p.endExclusive);
+      router.replace(`/transactions?${u.toString()}`);
+    }
+  }, [params, p.start, p.endExclusive, router]);
+  const byDay = Object.fromEntries((data?.days ?? []).map((d) => [d.date, d]));
+  const days = daysOf(p.start, p.endExclusive);
+  const lead = (new Date(`${p.start}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const today = todayISO();
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="overflow-hidden rounded-xl border border-rule bg-surface">
+        <div className="grid grid-cols-7 border-b border-rule bg-raised text-center text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="py-1.5">{d}</div>)}
         </div>
-        <Field label="Description">{(id) => <Input id={id} required maxLength={500} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />}</Field>
-        <Field label="Category (optional)">{(id) => (
-          <Select id={id} value={f.category_id} onChange={(e) => setF({ ...f, category_id: e.target.value })}>
-            <option value="">Categorise automatically</option>{cats ? <CategoryOptions cats={cats} /> : null}
-          </Select>
-        )}</Field>
-        {err ? <ErrorNote error={err} /> : null}
-        <Button type="submit" variant="primary" busy={busy}>Add transaction</Button>
-      </form>
-    </Sheet>
+        <div className="grid grid-cols-7">
+          {Array.from({ length: lead }).map((_, i) => <div key={`l${i}`} className="min-h-16 border-b border-r border-rule bg-sunken/30 sm:min-h-20" />)}
+          {days.map((d) => {
+            const t = byDay[d];
+            const sel = d === day;
+            return (
+              <button key={d} type="button" onClick={() => setDay(sel ? null : d)} aria-pressed={sel}
+                aria-label={`${formatDate(d)}${t ? `: in ${formatMoney(t.money_in)}, out ${formatMoney(t.spent)}` : ", nothing recorded"}`}
+                className={cx("flex min-h-16 flex-col items-stretch border-b border-r border-rule p-1 text-left transition-colors sm:min-h-20 sm:p-1.5 [&:nth-child(7n)]:border-r-0", sel ? "bg-accent-wash" : "hover:bg-sunken/60", d > today && "opacity-50")}>
+                <span className={cx("num text-xs", d === today ? "inline-flex size-5 items-center justify-center self-start rounded-full bg-accent font-semibold text-accent-ink" : "text-ink-soft")}>{Number(d.slice(8))}</span>
+                {t ? (
+                  <span className="num mt-auto flex flex-col text-right text-[10.5px] leading-tight sm:text-xs">
+                    {Number(t.money_in) ? <span className="truncate text-credit">{formatMoney(t.money_in, "INR", { decimals: false }).replace("₹", "")}</span> : null}
+                    {Number(t.spent) ? <span className="truncate text-debit">{formatMoney(t.spent, "INR", { decimals: false }).replace("₹", "")}</span> : null}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {day ? (
+        <section aria-label={`Transactions on ${formatDate(day)}`} className="rounded-xl border border-rule bg-surface px-4 sm:px-6">
+          <h2 className="pt-4 text-sm font-semibold">{formatDate(day)}</h2>
+          {!dayTx ? <Loading /> : dayTx.items.length ? <TxnList items={dayTx.items} onOpen={(t) => onOpen(t.id)} compact /> : <p className="py-4 text-sm text-ink-soft">Nothing recorded on this day.</p>}
+        </section>
+      ) : <p className="text-center text-sm text-ink-faint">Choose a day to see its transactions.</p>}
+    </div>
   );
 }
 

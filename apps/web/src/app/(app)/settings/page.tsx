@@ -5,7 +5,7 @@ import { Badge, Button, ErrorNote, Field, Input, Loading, PageHeader, Panel, Sel
 import { api, ApiError, useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
-type Me = { email: string; display_name: string; timezone: string };
+type Me = { email: string; display_name: string; timezone: string; mfa_enabled: boolean; mfa_required: boolean };
 type Session = { id: string; created_at: string; last_seen_at: string; user_agent: string | null; current: boolean };
 type AiProvider = { key: string; label: string; needs_key: boolean; default_model: string | null; key_hint: string; key_saved: boolean };
 type AiSettings = { server_enabled: boolean; provider: string; model: string; providers: AiProvider[]; auto_categorize: boolean; auto_categorize_ready: boolean; auto_categorize_error: { code: string; message: string; at: string } | null; assistant_enabled: boolean; classification_enabled: boolean; share_descriptions: boolean; opted_in_at: string | null; key: { configured: boolean; source: string | null; masked_suffix: string | null }; notice: string; version: number };
@@ -15,11 +15,17 @@ export default function SettingsPage() {
   if (!me) return <Loading />;
   return (
     <>
-      <PageHeader title="Settings" description="The optional AI assistant, inviting people to their own ledgers, and the devices signed in to yours." />
+      <PageHeader title="Settings" description="Your sign-in and devices, your data, the optional AI assistant, and invites for other people's ledgers." />
+      <nav aria-label="Settings sections" className="-mx-4 mb-6 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0">
+        {[["security", "Sign-in and security"], ["data", "Your data"], ["ai", "AI assistant"], ["people", "Invites"]].map(([id, label]) => (
+          <a key={id} href={`#${id}`} className="shrink-0 rounded-full border border-rule bg-surface px-3 py-1 text-sm text-ink-soft hover:border-ink-faint hover:text-ink">{label}</a>
+        ))}
+      </nav>
       <div className="grid grid-cols-1 gap-6">
-        <div id="ai"><AiPanel /></div>
-        <div id="people"><People /></div>
-        <Security me={me} />
+        <div id="security" className="scroll-mt-20"><Security me={me} /></div>
+        <div id="data" className="scroll-mt-20"><DataPanel /></div>
+        <div id="ai" className="scroll-mt-20"><AiPanel /></div>
+        <div id="people" className="scroll-mt-20"><People /></div>
       </div>
     </>
   );
@@ -51,8 +57,8 @@ function People() {
   const TONE = { pending: "review", used: "credit", expired: "neutral", revoked: "neutral" } as const;
   const LABEL = { pending: "Waiting", used: "Joined", expired: "Expired", revoked: "Revoked" };
   return (
-    <Panel title="People">
-      <p className="-mt-1 mb-5 max-w-[70ch] text-sm text-ink-soft">Invite someone to keep their own ledger on this OneLedger. They get a separate, private ledger: they can&apos;t see yours and you can&apos;t see theirs. Each link works once and expires in 7 days.</p>
+    <Panel title="Invite someone to their own ledger">
+      <p className="-mt-1 mb-5 max-w-[70ch] text-sm text-ink-soft">To split bills with someone inside your ledger, use <a href="/people" className="underline">Shared with people</a> instead. Invite someone to keep their own ledger on this OneLedger. They get a separate, private ledger: they can&apos;t see yours and you can&apos;t see theirs. Each link works once and expires in 7 days.</p>
       <form onSubmit={create} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <Field label="Their email (optional)" hint="If set, only this email can use the link.">{(id, d) => <Input id={id} aria-describedby={d} type="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
         <Field label="Note for you (optional)" hint="Only you see this, e.g. who it's for.">{(id, d) => <Input id={id} aria-describedby={d} maxLength={120} placeholder="e.g. Priya" value={note} onChange={(e) => setNote(e.target.value)} />}</Field>
@@ -102,26 +108,140 @@ function device(ua: string | null): string {
   return os ? `${browser} on ${os}` : browser;
 }
 
+function PasswordForm() {
+  const [f, setF] = useState({ current: "", next: "", again: "" });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const mismatch = f.again.length > 0 && f.next !== f.again;
+  return (
+    <form className="grid gap-3 sm:grid-cols-3" onSubmit={async (e) => {
+      e.preventDefault();
+      setBusy(true);
+      setErr(null);
+      setMsg(null);
+      try {
+        const r = await api<{ signed_out: number }>("/auth/password", { method: "POST", json: { current_password: f.current, new_password: f.next } });
+        setMsg(r.signed_out ? `Password changed. ${r.signed_out} other ${r.signed_out === 1 ? "device was" : "devices were"} signed out.` : "Password changed.");
+        setF({ current: "", next: "", again: "" });
+      } catch (x) { setErr(x); } finally { setBusy(false); }
+    }}>
+      <Field label="Current password">{(id) => <Input id={id} type="password" autoComplete="current-password" required value={f.current} onChange={(e) => setF({ ...f, current: e.target.value })} />}</Field>
+      <Field label="New password" hint="At least 12 characters.">{(id, d) => <Input id={id} aria-describedby={d} type="password" autoComplete="new-password" required minLength={12} value={f.next} onChange={(e) => setF({ ...f, next: e.target.value })} />}</Field>
+      <Field label="New password again" error={mismatch ? "The two new passwords are different." : null}>{(id) => <Input id={id} type="password" autoComplete="new-password" required value={f.again} onChange={(e) => setF({ ...f, again: e.target.value })} />}</Field>
+      <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
+        <Button type="submit" busy={busy} disabled={mismatch || f.next.length < 12 || !f.current}>Change password</Button>
+        <span className="text-xs text-ink-faint">Other devices are signed out when you change it.</span>
+      </div>
+      {msg ? <p role="status" className="rounded-lg bg-credit-wash px-3.5 py-2 text-sm text-credit sm:col-span-3">{msg}</p> : null}
+      {err ? <div className="sm:col-span-3"><ErrorNote error={err} /></div> : null}
+    </form>
+  );
+}
+
+function TwoStep({ me, onChanged }: { me: Me; onChanged: () => void }) {
+  const [enrol, setEnrol] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setErr(null);
+    try { await fn(); } catch (x) { setErr(x); } finally { setBusy(false); }
+  }
+  if (me.mfa_enabled) {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-sm"><Badge tone="credit">On</Badge> <span className="ml-1 text-ink-soft">Signing in asks for a code from your authenticator app.</span></p>
+        {me.mfa_required ? <p className="text-xs text-ink-faint">This server requires two-step sign-in, so it can&apos;t be turned off.</p> : (
+          <form className="grid items-end gap-3 sm:grid-cols-[1fr_10rem_auto]" onSubmit={(e) => { e.preventDefault(); void run(async () => { await api("/auth/mfa/disable", { method: "POST", json: { code, password } }); setCode(""); setPassword(""); onChanged(); }); }}>
+            <Field label="Password">{(id) => <Input id={id} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
+            <Field label="Code from the app">{(id) => <Input id={id} inputMode="numeric" autoComplete="one-time-code" required maxLength={8} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />}</Field>
+            <Button type="submit" variant="danger" busy={busy}>Turn off</Button>
+          </form>
+        )}
+        {err ? <ErrorNote error={err} /> : null}
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm"><Badge tone="review">Off</Badge> <span className="ml-1 text-ink-soft">Add a code from an authenticator app (Google Authenticator, 1Password, Authy) to every sign-in.</span></p>
+      {!enrol ? (
+        <Button className="self-start" busy={busy} onClick={() => run(async () => setEnrol(await api<{ secret: string; otpauth_uri: string }>("/auth/mfa/enroll", { method: "POST" })))}>Turn on two-step sign-in</Button>
+      ) : (
+        <form className="flex flex-col gap-3 rounded-xl border border-rule bg-raised p-4" onSubmit={(e) => { e.preventDefault(); void run(async () => { await api("/auth/mfa/enroll/confirm", { method: "POST", json: { code } }); setEnrol(null); setCode(""); onChanged(); }); }}>
+          <p className="text-sm">1. In your authenticator app, add an account with this key, or <a href={enrol.otpauth_uri} className="underline">open it in the app</a> on this device:</p>
+          <code className="select-all break-all rounded-lg bg-surface px-3 py-2 font-mono text-sm tracking-wider ring-1 ring-rule">{enrol.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="2. Enter the 6-digit code it shows">{(id) => <Input id={id} inputMode="numeric" autoComplete="one-time-code" required maxLength={8} className="w-40" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />}</Field>
+            <Button type="submit" variant="primary" busy={busy} disabled={code.length < 6}>Confirm</Button>
+            <Button type="button" variant="ghost" onClick={() => setEnrol(null)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+      {err ? <ErrorNote error={err} /> : null}
+    </div>
+  );
+}
+
 function Security({ me }: { me: Me }) {
   const { data: sessions, mutate } = useApi<Session[]>("/auth/sessions");
+  const { mutate: mutateMe } = useApi<Me>("/me");
+  const current = sessions?.find((s) => s.current);
+  const others = (sessions ?? []).filter((s) => !s.current);
+  const groups = Object.values(others.reduce<Record<string, Session[]>>((acc, s) => { (acc[device(s.user_agent)] ??= []).push(s); return acc; }, {}));
   return (
-    <Panel title="Sign-in">
+    <Panel title="Sign-in and security">
       <p className="text-sm text-ink-soft">Signed in as <span className="font-medium text-ink">{me.email}</span></p>
-      <div className="mb-1 mt-6 flex items-center justify-between gap-3">
+      <section className="mt-6">
+        <h3 className="mb-3 text-sm font-medium">Password</h3>
+        <PasswordForm />
+      </section>
+      <section className="mt-6 border-t border-rule pt-5">
+        <h3 className="mb-3 text-sm font-medium">Two-step sign-in</h3>
+        <TwoStep me={me} onChanged={() => { mutateMe(); mutate(); }} />
+      </section>
+      <div className="mb-1 mt-6 flex items-center justify-between gap-3 border-t border-rule pt-5">
         <h3 className="text-sm font-medium">Signed-in sessions</h3>
-        {(sessions?.length ?? 0) > 1 ? <Button size="sm" variant="ghost" onClick={() => api("/auth/sessions/revoke-others", { method: "POST" }).then(() => mutate())}>Sign out all other devices</Button> : null}
+        {others.length ? <Button size="sm" variant="ghost" onClick={() => api("/auth/sessions/revoke-others", { method: "POST" }).then(() => mutate())}>Sign out all other devices</Button> : null}
       </div>
       <ul className="text-sm">
-        {sessions?.map((s) => (
-          <li key={s.id} className="flex items-center justify-between gap-3 border-t border-rule py-2.5">
+        {current ? (
+          <li className="flex items-center justify-between gap-3 border-t border-rule py-2.5">
             <span className="min-w-0">
-              <span className="flex items-center gap-2 font-medium">{device(s.user_agent)}{s.current ? <Badge tone="credit">This device</Badge> : null}</span>
-              <span className="block text-xs text-ink-faint">Last active {new Date(s.last_seen_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+              <span className="flex items-center gap-2 font-medium">{device(current.user_agent)}<Badge tone="credit">This device</Badge></span>
+              <span className="block text-xs text-ink-faint">Last active {new Date(current.last_seen_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
             </span>
-            {!s.current ? <Button size="sm" variant="ghost" onClick={() => api(`/auth/sessions/${s.id}`, { method: "DELETE" }).then(() => mutate())}>Sign out</Button> : null}
           </li>
-        ))}
+        ) : null}
+        {groups.map((g) => {
+          const latest = g[0]!;
+          return (
+            <li key={latest.id} className="flex items-center justify-between gap-3 border-t border-rule py-2.5">
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 font-medium">{device(latest.user_agent)}{g.length > 1 ? <span className="num text-xs font-normal text-ink-faint">{g.length} sessions</span> : null}</span>
+                <span className="block text-xs text-ink-faint">Last active {new Date(latest.last_seen_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+              </span>
+              <Button size="sm" variant="ghost" onClick={async () => { for (const s of g) await api(`/auth/sessions/${s.id}`, { method: "DELETE" }); mutate(); }}>{g.length > 1 ? `Sign out all ${g.length}` : "Sign out"}</Button>
+            </li>
+          );
+        })}
       </ul>
+    </Panel>
+  );
+}
+
+function DataPanel() {
+  return (
+    <Panel title="Your data">
+      <p className="-mt-1 mb-4 max-w-[70ch] text-sm text-ink-soft">Take a copy whenever you like. The JSON file has everything: accounts, balances, transactions with their categories and splits, rules, budgets, goals, loans, cards, investments, people and templates. Statement files and receipt photos stay encrypted on the server.</p>
+      <div className="flex flex-wrap gap-2">
+        <a href="/api/bff/export/ledger.json" download className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-accent px-4 text-[15px] font-medium text-accent-ink hover:opacity-90">Download everything (JSON)</a>
+        <a href="/api/bff/export/transactions.csv" download className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-rule-strong/80 bg-surface px-4 text-[15px] font-medium hover:border-ink-faint">Transactions for a spreadsheet (CSV)</a>
+      </div>
+      <p className="mt-3 text-xs text-ink-faint">Whoever runs this server can also make full backups with <code className="rounded bg-sunken px-1">make backup</code>.</p>
     </Panel>
   );
 }

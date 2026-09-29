@@ -65,6 +65,7 @@ class BudgetIn(BaseModel):
     amount: MoneyIn
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     start_date: date | None = None
+    rollover: bool = False
 
 
 @router.get("/budgets")
@@ -104,6 +105,7 @@ def create_budget(body: BudgetIn, a: WriteAuth) -> dict[str, Any]:
         amount=body.amount,
         currency=currency,
         start_date=body.start_date or date(today.year, today.month, 1),
+        rollover=body.rollover,
     )
     a.db.add(b)
     a.db.flush()
@@ -116,6 +118,7 @@ class BudgetPatch(BaseModel):
     version: int
     name: str | None = Field(default=None, min_length=1, max_length=120)
     amount: MoneyIn | None = None
+    rollover: bool | None = None
 
 
 @router.patch("/budgets/{budget_id}")
@@ -131,8 +134,10 @@ def update_budget(budget_id: uuid.UUID, body: BudgetPatch, a: WriteAuth) -> dict
         if body.amount <= 0:
             raise ValidationFailed("Budget amount must be positive.", code="INVALID_AMOUNT")
         b.amount = body.amount
+    if body.rollover is not None:
+        b.rollover = body.rollover
     b.version += 1
-    audit(a.db, a.owner_id, a.actor, "budget.update", "budget", b.id, ["name", "amount"])
+    audit(a.db, a.owner_id, a.actor, "budget.update", "budget", b.id, ["name", "amount", "rollover"])
     a.commit()
     return {"id": str(b.id), "version": b.version}
 
@@ -220,6 +225,37 @@ def contribute(goal_id: uuid.UUID, body: ContributionIn, a: WriteAuth) -> dict[s
     )
     a.db.flush()
     audit(a.db, a.owner_id, a.actor, "goal.contribute", "goal", g.id, ["contributions"])
+    a.commit()
+    return planning.goal_progress(a.db, a.owner_id, g, today_in(a.user().timezone))
+
+
+class GoalPatch(BaseModel):
+    version: int
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    target_amount: MoneyIn | None = None
+    target_date: date | None = None
+    clear_target_date: bool = False
+
+
+@router.patch("/goals/{goal_id}")
+def update_goal(goal_id: uuid.UUID, body: GoalPatch, a: WriteAuth) -> dict[str, Any]:
+    g = a.db.get(FinancialGoal, goal_id)
+    if g is None or g.owner_id != a.owner_id or g.deleted_at:
+        raise NotFoundError()
+    if g.version != body.version:
+        raise ConflictError("This goal changed since you loaded it.", code="VERSION_CONFLICT")
+    if body.name:
+        g.name = body.name
+    if body.target_amount is not None:
+        if body.target_amount <= 0:
+            raise ValidationFailed("Target must be positive.", code="INVALID_AMOUNT")
+        g.target_amount = body.target_amount
+    if body.clear_target_date:
+        g.target_date = None
+    elif body.target_date is not None:
+        g.target_date = body.target_date
+    g.version += 1
+    audit(a.db, a.owner_id, a.actor, "goal.update", "goal", g.id, ["name", "target_amount", "target_date"])
     a.commit()
     return planning.goal_progress(a.db, a.owner_id, g, today_in(a.user().timezone))
 

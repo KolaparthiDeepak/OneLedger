@@ -104,6 +104,54 @@ def merchant_key(description: str, merchant: str | None) -> str:
     return " ".join(meaningful[:3]) or "UNKNOWN"
 
 
+_ACRONYMS = {
+    "ATM",
+    "SBI",
+    "HDFC",
+    "ICICI",
+    "IDFC",
+    "HSBC",
+    "EMI",
+    "SIP",
+    "LIC",
+    "CC",
+    "UPI",
+    "NEFT",
+    "IMPS",
+    "BSE",
+    "NSE",
+    "MF",
+    "PVR",
+    "IRCTC",
+    "BESCOM",
+    "ACT",
+    "BSNL",
+    "EPF",
+    "PPF",
+    "NPS",
+    "LPG",
+    "GST",
+    "TDS",
+    "KYC",
+    "BBMP",
+}
+_EXPANSIONS = {"WDL": "Withdrawal", "PMT": "Payment", "PYMT": "Payment", "TXN": "Transaction", "RECD": "Received"}
+
+
+def display_label(key: str) -> str:
+    """A readable name from a normalised merchant key: "ATM CASH WDL" -> "ATM Cash Withdrawal"."""
+    words = []
+    for w in key.split():
+        up = w.upper()
+        if up in _EXPANSIONS:
+            words.append(_EXPANSIONS[up])
+        elif up in _ACRONYMS or (len(up) <= 4 and not any(v in up for v in "AEIOU")):
+            words.append(up)
+        else:
+            words.append(w[:1].upper() + w[1:].lower())
+    return " ".join(words) or key
+
+
 def next_date(last: date, cadence: RecurrenceCadence, anchor_day: int) -> date:
     if cadence == RecurrenceCadence.WEEKLY:
         return last + timedelta(days=7)

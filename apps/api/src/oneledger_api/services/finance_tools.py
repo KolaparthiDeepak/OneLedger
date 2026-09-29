@@ -515,6 +515,45 @@ def get_loan_summary(t: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     return get_loans(t, args)
 
 
+def get_upcoming_bills(t: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    from .insights import upcoming_bills
+
+    days = max(1, min(int(args.get("days") or 30), 120))
+    bills = upcoming_bills(t.db, t.owner_id, today_in(t.user.timezone), days)
+    m = Metrics()
+    for b in bills:
+        b["amount_metric"] = m.add(f"{b['label']} due {b['date']}", b["amount"], b["currency"])
+    return {"bills": bills, "metrics": m.items, "note": "Expected payments; nothing is added to the ledger."}
+
+
+def get_safe_to_spend(t: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    from .insights import safe_to_spend
+
+    out = safe_to_spend(t.db, t.owner_id, today_in(t.user.timezone), t.user.base_currency)
+    m = Metrics()
+    if out.get("available"):
+        out["per_day_metric"] = m.add("Safe to spend per day", out["per_day"], out["currency"])
+        out["safe_total_metric"] = m.add("Safe to spend in total", out["safe_total"], out["currency"])
+        out["obligations_metric"] = m.add("Bills before next income", out["obligations_total"], out["currency"])
+    return {**out, "metrics": m.items}
+
+
+def get_shared_balances(t: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    from oneledger_db.models import Person
+
+    from .people import person_out
+
+    today = today_in(t.user.timezone)
+    people = [
+        person_out(t.db, t.owner_id, p, today)
+        for p in t.db.scalars(select(Person).where(Person.owner_id == t.owner_id, Person.archived_at.is_(None)))
+    ]
+    m = Metrics()
+    for p in people:
+        p["balance_metric"] = m.add(f"Balance with {p['name']} (positive = they owe you)", p["balance"], p["currency"])
+    return {"people": people, "metrics": m.items}
+
+
 @dataclass(frozen=True)
 class Tool:
     name: str
@@ -635,6 +674,24 @@ TOOLS: dict[str, Tool] = {
             find_anomalies,
         ),
         Tool("get_financial_goals", "Goals with target and current progress.", {}, get_financial_goals),
+        Tool(
+            "get_upcoming_bills",
+            "Recurring payments, card bills and loan EMIs expected in the next N days (default 30).",
+            {"days": {"type": "integer", "minimum": 1, "maximum": 120}},
+            get_upcoming_bills,
+        ),
+        Tool(
+            "get_safe_to_spend",
+            "How much can be spent per day until the next income without missing a listed bill.",
+            {},
+            get_safe_to_spend,
+        ),
+        Tool(
+            "get_shared_balances",
+            "People the owner shares expenses with and who owes whom.",
+            {},
+            get_shared_balances,
+        ),
     ]
 }
 

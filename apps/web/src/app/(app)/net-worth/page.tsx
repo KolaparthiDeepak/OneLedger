@@ -17,7 +17,7 @@ type NW = {
 
 export default function NetWorthPage() {
   const { data, error } = useApi<NW>("/analytics/net-worth");
-  const { data: hist } = useApi<{ points: { date: string; currency: string; net_worth: string; partial: boolean }[] }>("/analytics/net-worth/history");
+  const { data: hist } = useApi<{ points: { date: string; currency: string; net_worth: string; partial: boolean; source: string }[] }>("/analytics/net-worth/history?days=730");
   if (error) return <ErrorNote error={error} />;
   if (!data) return <Loading />;
   const inr = data.data.totals.INR;
@@ -44,7 +44,12 @@ export default function NetWorthPage() {
           <Provenance p={data.provenance} showWarnings />
         </Panel>
         <Panel title="History">
-          {hist && hist.points.length > 1 ? <NetWorthChart points={hist.points.filter((p) => p.currency === "INR")} /> : <p className="text-sm text-ink-soft">A daily snapshot is saved automatically. The chart appears after a few days.</p>}
+          {hist && hist.points.length > 1 ? (
+            <>
+              <NetWorthChart points={hist.points.filter((p) => p.currency === "INR")} />
+              {hist.points.some((p) => p.source === "computed") ? <p className="mt-1 text-xs text-ink-faint">Month ends before daily tracking began are rebuilt from your recorded balances.</p> : null}
+            </>
+          ) : <p className="text-sm text-ink-soft">The chart appears once there are balances on at least two dates. Import a statement with a balance column, or record a balance on an account.</p>}
         </Panel>
       </div>
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

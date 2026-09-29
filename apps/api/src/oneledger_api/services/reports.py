@@ -36,6 +36,7 @@ from oneledger_domain.enums import (
 )
 from oneledger_domain.periods import DateRange, add_months, months_between
 from oneledger_domain.reporting import CALCULATION_VERSION, AllocationFact, Summary, summarize
+from oneledger_domain.text import plural
 from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.orm import Session
 
@@ -112,7 +113,10 @@ def _coverage_warnings(
     warnings: list[str] = []
     partial = False
     if summary is not None and summary.unclassified_count:
-        warnings.append(f"{summary.unclassified_count} transaction(s) are unclassified; totals are provisional.")
+        warnings.append(
+            f"{plural(summary.unclassified_count, 'transaction')} unclassified (not categorised yet); "
+            "totals are provisional."
+        )
         partial = True
     pending = (
         db.scalar(
@@ -133,11 +137,11 @@ def _coverage_warnings(
         or 0
     )
     if pending:
-        warnings.append(f"{pending} pending transaction(s) are excluded until posted.")
+        warnings.append(f"{plural(pending, 'pending transaction')} left out until posted.")
     reviews = open_counts(db, owner_id)
     if reviews:
         n = sum(reviews.values())
-        warnings.append(f"{n} item(s) need review (duplicates/transfers) and may change these totals.")
+        warnings.append(f"{plural(n, 'item')} to review (duplicates, transfers, EMIs) may change these totals.")
         if reviews.get("TRANSFER_SUGGESTION") or reviews.get("POSSIBLE_DUPLICATE"):
             partial = True
     if rng is not None and accounts:
@@ -659,11 +663,11 @@ def balances_report(
     warnings = []
     if unknown:
         warnings.append(
-            f"{unknown} account(s) have no known balance; add an opening balance or import a statement "
+            f"{plural(unknown, 'account')} with no known balance; add an opening balance or import a statement "
             "with a balance column."
         )
     if stale:
-        warnings.append(f"{stale} account balance(s) are older than {STALE_DAYS} days.")
+        warnings.append(f"{plural(stale, 'account balance')} older than {STALE_DAYS} days.")
     qid, rev = record_query(db, owner_id, "balances", {"as_of": as_of.isoformat()}, "balances-v1")
     return {
         "data": {
@@ -743,6 +747,57 @@ def net_worth_at(db: Session, owner_id: uuid.UUID, cutoff: date) -> tuple[nw.Net
         comps.append(nw.Component(f"account:{a.id}", a.name, a.kind.nature, a.currency, a.kind.value, obs))
     comps += inv_comps
     return nw.compute_net_worth(comps, cutoff), comps
+
+
+def net_worth_backfill(db: Session, owner_id: uuid.UUID, today: date, *, months: int = 24) -> list[dict[str, Any]]:
+    """Month-end net worth rebuilt from recorded balances and valuations (review finding F4).
+
+    A new ledger has dated balances from statements long before the first daily snapshot, so the
+    history chart can start on day one. Points use exactly the same calculation as today's figure
+    and are marked partial when any component was unknown at that date.
+    """
+    from oneledger_domain.periods import add_months
+
+    first = db.scalar(
+        select(func.min(BalanceSnapshot.as_of)).where(
+            BalanceSnapshot.owner_id == owner_id,
+            BalanceSnapshot.deleted_at.is_(None),
+            # A person's shared-expense account starts at zero long ago; that is not real history.
+            BalanceSnapshot.source_ref.is_distinct_from("person_opening"),
+        )
+    )
+    first_val = db.scalar(
+        select(func.min(InvestmentValuation.valuation_date)).where(
+            InvestmentValuation.owner_id == owner_id, InvestmentValuation.deleted_at.is_(None)
+        )
+    )
+    starts = [d for d in (first, first_val) if d is not None]
+    if not starts:
+        return []
+    begin = max(min(starts), add_months(today.replace(day=1), -months))
+    points: list[dict[str, Any]] = []
+    cursor = begin.replace(day=1)
+    while True:
+        month_end = add_months(cursor, 1) - timedelta(days=1)
+        if month_end >= today:
+            break
+        if month_end >= begin:
+            result, _ = net_worth_at(db, owner_id, month_end)
+            for cur, t in result.totals.items():
+                points.append(
+                    {
+                        "date": month_end,
+                        "currency": cur,
+                        "net_worth": str(t.net_worth),
+                        "assets": str(t.assets),
+                        "liabilities": str(t.liabilities),
+                        "partial": result.partial,
+                        "stale": bool(result.stale),
+                        "source": "computed",
+                    }
+                )
+        cursor = add_months(cursor, 1)
+    return points
 
 
 def net_worth_report(db: Session, owner_id: uuid.UUID, tz: str, today: date) -> dict[str, Any]:

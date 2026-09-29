@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { use, useState, type FormEvent } from "react";
+import { BalanceChart } from "@/components/charts";
+import { Icon } from "@/components/icons";
+import { useQuickAdd } from "@/components/quick-add-context";
 import { TxnList, TxnSheet, type Txn } from "@/components/transactions";
 import { Amount, Button, ButtonLink, ErrorNote, Field, Input, Loading, PageHeader, Panel, Select } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
@@ -15,6 +18,8 @@ export default function AccountDetail({ params }: { params: Promise<{ id: string
   const { data: a, error, mutate } = useApi<Detail>(`/accounts/${id}`);
   const { data: snaps, mutate: mutSnaps } = useApi<Snapshot[]>(`/accounts/${id}/balances`);
   const { data: txns, mutate: mutTx } = useApi<{ items: Txn[] }>(`/transactions?account_id=${id}&limit=30`);
+  const { data: history } = useApi<{ points: { date: string; balance: string }[]; nature: string }>(`/accounts/${id}/balance-history?days=365`);
+  const add = useQuickAdd();
   const [open, setOpen] = useState<string | null>(null);
   const [bal, setBal] = useState({ amount: "", as_of: todayISO(), kind: "CURRENT" });
   const [result, setResult] = useState<{ state: string; unexplained_delta?: string } | null>(null);
@@ -47,7 +52,12 @@ export default function AccountDetail({ params }: { params: Promise<{ id: string
   return (
     <>
       <PageHeader title={a.name} description={[KIND_LABEL[a.kind], a.institution, a.masked_identifier].filter(Boolean).join(", ")}
-        actions={<ButtonLink href={`/imports?account=${id}`} variant="primary">Import statement</ButtonLink>} />
+        actions={
+          <>
+            {["CASH", "WALLET", "BANK_SAVINGS", "BANK_CURRENT", "CREDIT_CARD"].includes(a.kind) ? <Button onClick={() => add({ kind: "expense", account_id: id })}><Icon name="plus" className="size-4" />Add transaction</Button> : null}
+            {a.kind !== "CASH" ? <ButtonLink href={`/imports?account=${id}`} variant="primary">Import statement</ButtonLink> : null}
+          </>
+        } />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.4fr]">
         <div className="flex flex-col gap-6">
           <Panel title={owed ? "Amount owed" : "Balance"}>
@@ -75,7 +85,12 @@ export default function AccountDetail({ params }: { params: Promise<{ id: string
             ) : null}
             {err ? <div className="mt-3"><ErrorNote error={err} /></div> : null}
           </Panel>
-          <Panel title="Balance history">
+          {history && history.points.length > 1 ? (
+            <Panel title={owed ? "Owed over time" : "Balance over time"}>
+              <BalanceChart points={history.points} liability={owed} />
+            </Panel>
+          ) : null}
+          <Panel title="Recorded balances">
             <ul className="text-sm">
               {snaps?.map((s) => (
                 <li key={s.id} className="flex justify-between border-b border-rule py-1.5 last:border-0">

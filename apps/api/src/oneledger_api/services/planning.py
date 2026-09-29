@@ -12,6 +12,7 @@ from oneledger_db.models import (
     Budget,
     FinancialGoal,
     GoalContribution,
+    Investment,
     RecurringTransaction,
     Transaction,
     TransactionAllocation,
@@ -19,8 +20,9 @@ from oneledger_db.models import (
 )
 from oneledger_domain import forecast as fc
 from oneledger_domain.enums import AllocationEffect, RecurrenceCadence
-from oneledger_domain.periods import DateRange, month_range
+from oneledger_domain.periods import DateRange, add_months, month_range
 from oneledger_domain.recurrence import is_overdue
+from oneledger_domain.text import plural
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -68,7 +70,16 @@ def list_recurring(
     if not include_dismissed:
         stmt = stmt.where(RecurringTransaction.state != "DISMISSED")
     rows = db.execute(stmt).all()
-    items = [recurring_out(r, today, name) for r, name in rows]
+    tracked = set(
+        db.scalars(
+            select(Investment.recurring_pattern_key).where(
+                Investment.owner_id == owner_id,
+                Investment.deleted_at.is_(None),
+                Investment.recurring_pattern_key.is_not(None),
+            )
+        )
+    )
+    items = [{**recurring_out(r, today, name), "tracked_as_holding": r.pattern_key in tracked} for r, name in rows]
     return sorted(items, key=lambda i: Decimal(i["monthly_equivalent"]))
 
 
@@ -105,9 +116,9 @@ def set_recurring_state(
 # --- Budgets -------------------------------------------------------------------------------------
 
 
-def budget_progress(db: Session, owner_id: uuid.UUID, budget: Budget, month: DateRange) -> dict[str, Any]:
-    """Net expense (purchases minus refunds) in the budget's category subtree, counted once."""
-    cat = load_context(db, owner_id)
+def _budget_spent(
+    db: Session, owner_id: uuid.UUID, budget: Budget, month: DateRange, descendants: set[uuid.UUID] | None
+) -> tuple[Decimal, int]:
     stmt = (
         select(func.coalesce(func.sum(TransactionAllocation.amount), 0), func.count(func.distinct(Transaction.id)))
         .join(Transaction, Transaction.id == TransactionAllocation.transaction_id)
@@ -120,24 +131,48 @@ def budget_progress(db: Session, owner_id: uuid.UUID, budget: Budget, month: Dat
             TransactionAllocation.effect == AllocationEffect.EXPENSE,
         )
     )
-    if budget.category_id:
-        stmt = stmt.where(TransactionAllocation.category_id.in_(cat.descendants(budget.category_id)))
+    if descendants is not None:
+        stmt = stmt.where(TransactionAllocation.category_id.in_(descendants))
     if budget.account_ids:
         stmt = stmt.where(Transaction.account_id.in_(budget.account_ids))
     total, count = db.execute(stmt).one()
-    spent = -Decimal(total)
-    remaining = budget.amount - spent
+    return -Decimal(total), int(count)
+
+
+ROLLOVER_MONTHS = 12
+
+
+def budget_progress(db: Session, owner_id: uuid.UUID, budget: Budget, month: DateRange) -> dict[str, Any]:
+    """Net expense (purchases minus refunds) in the budget's category subtree, counted once.
+
+    With rollover on, what was left (or overspent) in earlier months since the budget started, up
+    to 12 months back, is carried into this month's available amount.
+    """
+    cat = load_context(db, owner_id)
+    descendants = cat.descendants(budget.category_id) if budget.category_id else None
+    spent, count = _budget_spent(db, owner_id, budget, month, descendants)
+    carried = Decimal(0)
+    if budget.rollover:
+        m = max(budget.start_date.replace(day=1), add_months(month.start, -ROLLOVER_MONTHS))
+        while m < month.start:
+            prev_spent, _ = _budget_spent(db, owner_id, budget, month_range(m.year, m.month), descendants)
+            carried += budget.amount - prev_spent
+            m = add_months(m, 1)
+    available = budget.amount + carried
+    remaining = available - spent
     return {
         "id": str(budget.id),
         "name": budget.name,
         "category_id": str(budget.category_id) if budget.category_id else None,
         "amount": str(budget.amount),
+        "carried_over": str(carried),
+        "available": str(available),
         "currency": budget.currency,
         "spent": str(spent),
         "remaining": str(remaining),
-        "percent": str((spent / budget.amount * 100).quantize(Decimal("0.1"))) if budget.amount else "0",
-        "over": spent > budget.amount,
-        "transaction_count": int(count),
+        "percent": str((spent / available * 100).quantize(Decimal("0.1"))) if available > 0 else "100.0",
+        "over": spent > available,
+        "transaction_count": count,
         "period_start": month.start,
         "period_end_exclusive": month.end_exclusive,
         "rollover": budget.rollover,
@@ -203,10 +238,24 @@ def goal_progress(db: Session, owner_id: uuid.UUID, goal: FinancialGoal, today: 
     if goal.target_date and goal.target_date > today and current < goal.target_amount:
         months = max((goal.target_date.year - today.year) * 12 + goal.target_date.month - today.month, 1)
         monthly_needed = str(((goal.target_amount - current) / months).quantize(Decimal("0.01")))
+    contributions = (
+        [
+            {"id": str(c.id), "date": c.contribution_date, "amount": str(c.amount), "note": c.note}
+            for c in db.scalars(
+                select(GoalContribution)
+                .where(GoalContribution.goal_id == goal.id)
+                .order_by(GoalContribution.contribution_date.desc())
+                .limit(12)
+            )
+        ]
+        if goal.progress_mode == "MANUAL"
+        else []
+    )
     return {
         "id": str(goal.id),
         "name": goal.name,
-        "target_amount": str(goal.target_amount),
+        "contributions": contributions,
+        "target_amount": str(Decimal(goal.target_amount).quantize(Decimal("0.01"))),
         "currency": goal.currency,
         "target_date": goal.target_date,
         "progress_mode": goal.progress_mode,
@@ -253,7 +302,7 @@ def forecast_report(db: Session, owner_id: uuid.UUID, today: date, days: int) ->
     totals = result.totals().get(currency, {"inflow": Decimal(0), "outflow": Decimal(0), "net": Decimal(0)})
     assumptions = list(result.assumptions)
     if suggested:
-        assumptions.append(f"{suggested} detected recurring pattern(s) are not yet confirmed and are excluded.")
+        assumptions.append(f"{plural(suggested, 'detected recurring payment')} not confirmed yet, so left out.")
     if len(known) != len(bals):
         assumptions.append("Some liquid accounts have no known balance; the projected balance is partial.")
     if not recs:

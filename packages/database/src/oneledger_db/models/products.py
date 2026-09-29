@@ -127,6 +127,7 @@ class Investment(Timestamps, Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     valuation_mode: Mapped[str] = mapped_column(String(20), nullable=False)  # UNITS | MANUAL_TOTAL
     include_in_net_worth: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    recurring_pattern_key: Mapped[str | None] = mapped_column(String(300))  # SIP that funds this holding
     deleted_at: Mapped[datetime | None]
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 

@@ -11,11 +11,15 @@ export const metadata: Metadata = {
   title: { default: "OneLedger", template: "%s · OneLedger" },
   description: "Your private ledger for every account, card, loan and investment.",
   robots: { index: false, follow: false },
+  applicationName: "OneLedger",
+  appleWebApp: { capable: true, title: "OneLedger", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f3f4ef" },
     { media: "(prefers-color-scheme: dark)", color: "#0e1522" },

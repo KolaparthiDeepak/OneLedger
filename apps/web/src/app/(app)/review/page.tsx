@@ -14,6 +14,7 @@ const EXPLAIN: Record<string, string> = {
   POSSIBLE_DUPLICATE: "Two rows look the same but the statement doesn't prove they're one payment. Merge them if they are, or keep both if you really paid twice.",
   UNMATCHED_TRANSFER: "These look like transfers or card payments, but the other account isn't in OneLedger. Add that account, or confirm the money went to someone else.",
   RECONCILIATION: "The balance on your statement differs from what the transactions add up to. Usually a statement period is missing or imported twice.",
+  LOAN_PAYMENT_SUGGESTION: "This debit is exactly your EMI and falls on the due date, but its description doesn't name the loan. If it is the EMI, only the interest will count as spending and the loan balance goes down.",
 };
 
 const TITLES: Record<string, string> = {
@@ -23,6 +24,7 @@ const TITLES: Record<string, string> = {
   RECONCILIATION: "Balances that don't match",
   SOURCE_REVISION: "Bank-reported changes",
   CATEGORIZATION: "Categories to check",
+  LOAN_PAYMENT_SUGGESTION: "Possible loan EMIs",
 };
 
 function Row({ t, onOpen }: { t: Txn; onOpen: (id: string) => void }) {
@@ -105,6 +107,11 @@ export default function ReviewPage() {
                         <>
                           <Button size="sm" variant="primary" busy={busy === i.id} onClick={() => act(i.id, () => api("/transactions/merge", { method: "POST", json: { survivor_id: i.transactions[1]!.id, duplicate_id: i.transactions[0]!.id } }))}>Merge into one</Button>
                           <Button size="sm" busy={busy === i.id} onClick={() => act(i.id, () => api(`/review/${i.id}/not-duplicate`, { method: "POST" }))}>Both are real</Button>
+                        </>
+                      ) : k === "LOAN_PAYMENT_SUGGESTION" ? (
+                        <>
+                          <Button size="sm" variant="primary" busy={busy === i.id} onClick={() => act(i.id, () => api(`/loans/${i.related.loan_id}/payments`, { method: "POST", json: { transaction_id: i.transactions[0]!.id } }))}>Yes, it&apos;s the {i.related.loan_name ?? "loan"} EMI</Button>
+                          <Button size="sm" busy={busy === i.id} onClick={() => act(i.id, () => api(`/review/${i.id}/dismiss`, { method: "POST" }))}>Not an EMI</Button>
                         </>
                       ) : k === "UNMATCHED_TRANSFER" ? (
                         <>

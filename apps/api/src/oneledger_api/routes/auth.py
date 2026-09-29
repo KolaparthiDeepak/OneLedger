@@ -13,8 +13,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 
 from ..deps import DB, AdminAuth, Ctx, EnrolAuth, ReadAuth, client_key
-from ..security.auth import login, mfa_required_for, new_totp_secret, totp_uri, verify_totp
+from ..security.auth import (
+    hash_password,
+    login,
+    mfa_required_for,
+    new_totp_secret,
+    totp_uri,
+    verify_password,
+    verify_totp,
+)
 from ..services.audit import audit
+from ..services.users import MIN_PASSWORD
 
 router = APIRouter(tags=["auth"])
 
@@ -218,3 +227,57 @@ def revoke_session(session_id: uuid.UUID, a: AdminAuth) -> None:
     )
     audit(a.db, a.owner_id, a.actor, "auth.session_revoke", "session", session_id)
     a.commit()
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=MIN_PASSWORD, max_length=256)
+
+
+@router.post("/auth/password")
+def change_password(body: PasswordChangeIn, a: AdminAuth) -> dict[str, int]:
+    """Change your password. Every other signed-in device is signed out."""
+    a.principal.require_strong()
+    user = a.user()
+    if not verify_password(user.password_hash, body.current_password):
+        audit(a.db, a.owner_id, a.actor, "auth.password_change_failed", "user", user.id)
+        a.commit()
+        raise AuthenticationError("Your current password is not correct.", code="PASSWORD_INCORRECT")
+    if body.new_password == body.current_password:
+        raise ValidationFailed("Choose a password you have not used here before.", code="PASSWORD_UNCHANGED")
+    user.password_hash = hash_password(body.new_password)
+    user.version += 1
+    current = a.principal.credential_id if a.principal.kind == "session" else None
+    result = a.db.execute(
+        update(AuthSession)
+        .where(AuthSession.owner_id == a.owner_id, AuthSession.revoked_at.is_(None), AuthSession.id != current)
+        .values(revoked_at=datetime.now(UTC))
+    )
+    audit(a.db, a.owner_id, a.actor, "auth.password_changed", "user", user.id, ["password_hash"])
+    a.commit()
+    return {"signed_out": int(getattr(result, "rowcount", 0) or 0)}
+
+
+class MfaDisableIn(BaseModel):
+    code: str = Field(min_length=6, max_length=8)
+    password: str = Field(min_length=1, max_length=256)
+
+
+@router.post("/auth/mfa/disable")
+def mfa_disable(body: MfaDisableIn, a: AdminAuth) -> dict[str, bool]:
+    """Turn off two-step sign-in (not allowed where the server requires it)."""
+    user = a.user()
+    if a.ctx.settings.require_mfa:
+        raise ValidationFailed("This server requires two-step sign-in.", code="MFA_REQUIRED_BY_SERVER")
+    if not user.mfa_enabled or user.totp_secret_enc is None:
+        raise ValidationFailed("Two-step sign-in is not on.", code="MFA_NOT_ENROLLED")
+    secret = a.ctx.box.decrypt_str(user.totp_secret_enc, associated_data=str(user.id).encode())
+    if not verify_password(user.password_hash, body.password) or not verify_totp(secret, body.code):
+        audit(a.db, a.owner_id, a.actor, "auth.mfa_disable_failed", "user", user.id)
+        a.commit()
+        raise AuthenticationError("The password or code is not correct.", code="MFA_INVALID")
+    user.mfa_enabled = False
+    user.totp_secret_enc = None
+    audit(a.db, a.owner_id, a.actor, "auth.mfa_disabled", "user", user.id, ["mfa_enabled"])
+    a.commit()
+    return {"enabled": False}

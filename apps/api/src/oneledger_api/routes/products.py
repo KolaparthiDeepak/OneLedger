@@ -79,8 +79,35 @@ def create_loan(body: LoanIn, a: WriteAuth) -> dict[str, Any]:
         emi_amount=body.emi_amount,
         actor=a.actor,
     )
+    # EMIs already in the ledger (statements imported before the loan was added) are matched now.
+    matched = svc.match_loan_payments(
+        a.db, a.owner_id, load_context(a.db, a.owner_id), actor=a.actor, loan_ids=[loan.id]
+    )
     a.commit()
-    return svc.loan_summary(a.db, a.owner_id, loan, today_in(a.user().timezone))
+    return {**svc.loan_summary(a.db, a.owner_id, loan, today_in(a.user().timezone)), "matched": matched}
+
+
+@router.post("/loans/{loan_id}/match-payments")
+def match_payments(loan_id: uuid.UUID, a: WriteAuth) -> dict[str, int]:
+    """Look for EMI debits in the ledger again (e.g. after changing the EMI amount)."""
+    loan = svc.get_loan(a.db, a.owner_id, loan_id)
+    out = svc.match_loan_payments(a.db, a.owner_id, load_context(a.db, a.owner_id), actor=a.actor, loan_ids=[loan.id])
+    a.commit()
+    return out
+
+
+@router.delete("/loans/{loan_id}/payments/{payment_id}")
+def remove_payment(loan_id: uuid.UUID, payment_id: uuid.UUID, a: WriteAuth) -> dict[str, str]:
+    """Unlink a debit from the loan; it goes back to being an ordinary transaction."""
+    from oneledger_db.models import LoanPayment
+
+    loan = svc.get_loan(a.db, a.owner_id, loan_id)
+    p = a.db.get(LoanPayment, payment_id)
+    if p is None or p.loan_id != loan.id or p.deleted_at is not None:
+        raise NotFoundError()
+    svc.unrecord_loan_payment(a.db, a.owner_id, p, load_context(a.db, a.owner_id), actor=a.actor)
+    a.commit()
+    return {"status": "removed"}
 
 
 @router.get("/loans/{loan_id}")
@@ -98,6 +125,7 @@ def loan_detail(loan_id: uuid.UUID, a: ReadAuth) -> dict[str, Any]:
             "fees": str(p.fees),
             "prepayment": str(p.prepayment),
             "actual": p.is_actual,
+            "source": p.source,
             "transaction_id": str(p.transaction_id) if p.transaction_id else None,
         }
         for p in a.db.scalars(
@@ -551,5 +579,71 @@ def add_valuation(inv_id: uuid.UUID, body: ValuationIn, a: WriteAuth) -> dict[st
     a.db.flush()
     bump_ledger_revision(a.db, a.owner_id)
     audit(a.db, a.owner_id, a.actor, "investment.valuation", "investment", inv.id, ["valuation"])
+    a.commit()
+    return svc.holding_summary(a.db, inv, today)
+
+
+class FromRecurringIn(BaseModel):
+    recurring_id: uuid.UUID
+    name: str | None = Field(default=None, max_length=160)
+    instrument_type: InstrumentType = InstrumentType.MUTUAL_FUND
+    identifier: str | None = Field(default=None, max_length=40)
+
+
+@router.post("/investments/from-recurring", status_code=201)
+def from_recurring(body: FromRecurringIn, a: WriteAuth) -> dict[str, Any]:
+    inv = svc.create_holding_from_recurring(
+        a.db,
+        a.owner_id,
+        body.recurring_id,
+        name=body.name,
+        instrument_type=body.instrument_type,
+        identifier=body.identifier,
+        cat=load_context(a.db, a.owner_id),
+        actor=a.actor,
+    )
+    a.commit()
+    return svc.holding_summary(a.db, inv, today_in(a.user().timezone))
+
+
+class HoldingPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    identifier: str | None = Field(default=None, max_length=40)
+    valuation_mode: Literal["UNITS", "MANUAL_TOTAL"] | None = None
+
+
+@router.patch("/investments/{inv_id}")
+def update_investment(inv_id: uuid.UUID, body: HoldingPatch, a: WriteAuth) -> dict[str, Any]:
+    inv = _inv(a, inv_id)
+    if body.name:
+        inv.name = body.name
+    if body.identifier is not None:
+        inv.identifier = body.identifier.strip() or None
+    if body.valuation_mode:
+        inv.valuation_mode = body.valuation_mode
+    inv.version += 1
+    audit(a.db, a.owner_id, a.actor, "investment.update", "investment", inv.id, ["name", "identifier"])
+    a.commit()
+    return svc.holding_summary(a.db, inv, today_in(a.user().timezone))
+
+
+@router.get("/investments/fund-search")
+def fund_search(q: str, a: ReadAuth) -> list[dict[str, str]]:
+    """Search AMFI's public list of mutual fund schemes by name."""
+    from ..services import market
+
+    del a
+    return market.search(q)
+
+
+@router.post("/investments/{inv_id}/refresh-price", status_code=201)
+def refresh_price(inv_id: uuid.UUID, a: WriteAuth) -> dict[str, Any]:
+    """Value a fund at today's AMFI NAV x the units you hold."""
+    from ..services import market
+
+    inv = _inv(a, inv_id)
+    today = today_in(a.user().timezone)
+    s = svc.holding_summary(a.db, inv, today)
+    market.refresh_price(a.db, a.owner_id, inv, Decimal(s["units"]) if s["units"] else None, a.actor)
     a.commit()
     return svc.holding_summary(a.db, inv, today)

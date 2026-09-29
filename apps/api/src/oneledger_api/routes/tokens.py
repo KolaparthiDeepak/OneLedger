@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from oneledger_db.models import (
     Account,
     ApiToken,
@@ -154,3 +154,99 @@ def export_csv(a: AdminAuth) -> PlainTextResponse:
 def token_info(a: ReadAuth) -> dict[str, Any]:
     """Lets the MCP server verify its credential and scopes."""
     return {"kind": a.principal.kind, "scopes": sorted(a.principal.scopes)}
+
+
+def _plain(row: Any, skip: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Column values of an ORM row as JSON-friendly values (owner id and encrypted blobs left out)."""
+    out: dict[str, Any] = {}
+    for col in row.__table__.columns:
+        if col.name in ("owner_id", *skip) or col.name.endswith("_enc"):
+            continue
+        v = getattr(row, col.key)
+        if isinstance(v, uuid.UUID):
+            v = str(v)
+        elif isinstance(v, list):
+            v = [str(x) if isinstance(x, uuid.UUID) else x for x in v]
+        elif hasattr(v, "value") and not isinstance(v, (int, float, str, bool)):
+            v = v.value
+        elif v is not None and not isinstance(v, (int, float, str, bool, dict)):
+            v = str(v)
+        out[col.name] = v
+    return out
+
+
+@router.get("/export/ledger.json")
+def export_json(a: AdminAuth) -> JSONResponse:
+    """Everything in your ledger as one JSON file: a backup you can keep or read with other tools.
+
+    Uploaded statement files and receipt images are not included (they stay encrypted on the server).
+    """
+    from oneledger_db.models import (
+        BalanceSnapshot,
+        Budget,
+        CreditCard,
+        CreditCardStatement,
+        FinancialGoal,
+        GoalContribution,
+        Investment,
+        InvestmentTransaction,
+        InvestmentValuation,
+        Loan,
+        LoanPayment,
+        LoanRateChange,
+        Person,
+        RecurringTransaction,
+        TransactionCategoryRule,
+        TransactionMerchant,
+        TransactionTag,
+        TransactionTagLink,
+        TransactionTemplate,
+        Transfer,
+        TransferLeg,
+    )
+
+    a.principal.require_strong()
+    tables: dict[str, Any] = {
+        "accounts": Account,
+        "balance_snapshots": BalanceSnapshot,
+        "categories": TransactionCategory,
+        "rules": TransactionCategoryRule,
+        "merchants": TransactionMerchant,
+        "tags": TransactionTag,
+        "tag_links": TransactionTagLink,
+        "transfers": Transfer,
+        "transfer_legs": TransferLeg,
+        "budgets": Budget,
+        "goals": FinancialGoal,
+        "goal_contributions": GoalContribution,
+        "loans": Loan,
+        "loan_rate_changes": LoanRateChange,
+        "loan_payments": LoanPayment,
+        "credit_cards": CreditCard,
+        "card_statements": CreditCardStatement,
+        "investments": Investment,
+        "investment_transactions": InvestmentTransaction,
+        "investment_valuations": InvestmentValuation,
+        "recurring": RecurringTransaction,
+        "people": Person,
+        "templates": TransactionTemplate,
+    }
+    data: dict[str, Any] = {
+        "format": "oneledger-export-v1",
+        "exported_at": datetime.now(UTC).isoformat(),
+    }
+    for name, model in tables.items():
+        data[name] = [_plain(r) for r in a.db.scalars(select(model).where(model.owner_id == a.owner_id))]
+    txns = a.db.scalars(
+        select(Transaction).where(Transaction.owner_id == a.owner_id, Transaction.deleted_at.is_(None))
+    ).all()
+    allocs: dict[uuid.UUID, list[dict[str, Any]]] = {}
+    for al in a.db.scalars(select(TransactionAllocation).where(TransactionAllocation.owner_id == a.owner_id)):
+        allocs.setdefault(al.transaction_id, []).append(_plain(al))
+    data["transactions"] = [{**_plain(t), "allocations": allocs.get(t.id, [])} for t in txns]
+    audit(a.db, a.owner_id, a.actor, "export.ledger", "export", None, [])
+    a.commit()
+    return JSONResponse(
+        data,
+        headers={"Content-Disposition": 'attachment; filename="oneledger-export.json"'},
+    )

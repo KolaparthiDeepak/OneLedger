@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter
 from oneledger_db.models import Account, BalanceSnapshot, CashAccount, FinancialInstitution
@@ -91,9 +91,15 @@ def list_accounts(a: ReadAuth, include_archived: bool = False) -> list[dict[str,
     rows = a.db.execute(stmt.order_by(Account.kind, Account.name)).all()
     tz = a.user().timezone
     balances = {b.account.id: b for b in account_balances(a.db, a.owner_id, today_in(tz), [r[0] for r in rows])}
+    from oneledger_db.models import Person
+
+    people = dict(
+        a.db.execute(select(Person.account_id, Person.id).where(Person.owner_id == a.owner_id)).tuples().all()
+    )
     out = []
     for acct, inst in rows:
         item = account_out(acct, inst)
+        item["person_id"] = str(people[acct.id]) if acct.id in people else None
         b = balances.get(acct.id)
         item["balance"] = str(b.balance) if b and b.balance is not None else None
         item["balance_as_of"] = b.derived_through if b else None
@@ -142,8 +148,18 @@ def create_account(body: AccountIn, a: WriteAuth) -> dict[str, object]:
         )
     bump_ledger_revision(a.db, a.owner_id)
     audit(a.db, a.owner_id, a.actor, "account.create", "account", acct.id, ["name", "kind", "currency"])
+    out = account_out(acct, body.institution_name)
+    if body.kind == AccountKind.CASH:
+        # ATM withdrawals already in the ledger move into the new wallet instead of counting as spending.
+        from ..services.cash import match_cash_withdrawals
+        from ..services.categories import load_context
+
+        a.db.flush()
+        out["cash_withdrawals_linked"] = match_cash_withdrawals(
+            a.db, a.owner_id, load_context(a.db, a.owner_id), actor=a.actor
+        )
     a.commit()
-    return account_out(acct, body.institution_name)
+    return out
 
 
 @router.get("/accounts/{account_id}")
@@ -249,3 +265,69 @@ def delete_balance(account_id: uuid.UUID, snapshot_id: uuid.UUID, a: WriteAuth) 
     bump_ledger_revision(a.db, a.owner_id)
     audit(a.db, a.owner_id, a.actor, "balance.delete", "account", account_id, ["balance"])
     a.commit()
+
+
+@router.get("/accounts/{account_id}/balance-history")
+def daily_balance_history(account_id: uuid.UUID, a: ReadAuth, days: int = 365) -> dict[str, object]:
+    """End-of-day balances, built exactly like the current balance (latest snapshot + later movements).
+
+    Only days where the balance changed are listed, plus the first and last day. Days before the
+    first recorded balance are unknown and left out.
+    """
+    from decimal import Decimal
+
+    from oneledger_db.models import Transaction
+    from oneledger_domain.networth import expected_closing
+    from sqlalchemy import func
+
+    from ..services.reports import active_txn_filter
+
+    days = max(7, min(days, 1100))
+    acct = get_account(a.db, a.owner_id, account_id)
+    today = today_in(a.user().timezone)
+    start = today - timedelta(days=days)
+    kinds = [BalanceKind.CURRENT, BalanceKind.OPENING] + (
+        [BalanceKind.STATEMENT] if acct.kind.nature.value == "LIABILITY" else []
+    )
+    snaps = list(
+        a.db.scalars(
+            select(BalanceSnapshot)
+            .where(
+                BalanceSnapshot.owner_id == a.owner_id,
+                BalanceSnapshot.account_id == acct.id,
+                BalanceSnapshot.deleted_at.is_(None),
+                BalanceSnapshot.balance_kind.in_(kinds),
+                BalanceSnapshot.as_of <= today,
+            )
+            .order_by(BalanceSnapshot.as_of, BalanceSnapshot.created_at)
+        )
+    )
+    if not snaps:
+        return {"account_id": str(acct.id), "points": [], "nature": acct.kind.nature.value}
+    moves: dict[date, Decimal] = {
+        d: Decimal(v)
+        for d, v in a.db.execute(
+            select(Transaction.transaction_date, func.sum(Transaction.amount))
+            .where(Transaction.owner_id == a.owner_id, Transaction.account_id == acct.id, active_txn_filter())
+            .group_by(Transaction.transaction_date)
+        ).all()
+    }
+    by_day = {s.as_of: s for s in snaps}  # the last snapshot of a day wins (ordered by created_at)
+    first = max(snaps[0].as_of, start)
+    points: list[dict[str, object]] = []
+    anchor = None
+    running = Decimal(0)
+    d = snaps[0].as_of
+    prev_value: Decimal | None = None
+    while d <= today:
+        if d in by_day:
+            anchor, running = by_day[d], Decimal(0)
+        else:
+            running += moves.get(d, Decimal(0))
+        assert anchor is not None
+        value = expected_closing(acct.kind.nature, anchor.amount, [running])
+        if d >= first and (value != prev_value or d in (first, today)):
+            points.append({"date": d, "balance": str(value), "observed": d in by_day})
+        prev_value = value
+        d += timedelta(days=1)
+    return {"account_id": str(acct.id), "points": points, "nature": acct.kind.nature.value}

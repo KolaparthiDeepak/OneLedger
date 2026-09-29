@@ -101,7 +101,7 @@ def test_delete_removes_loan_payment_and_restores_outstanding(api):
         201,
     )
     imp = import_csv(api, bank, csv_bytes(["05/08/2026,NACH SBI HOME LOAN EMI,,10000.00,,40000.00"]))
-    emi = txns(api)[0]
+    emi = next(t for t in txns(api) if t["account"]["id"] == bank)  # auto-matched; lender figures replace it
     api.ok(
         api.post(
             f"/loans/{loan['id']}/payments",
