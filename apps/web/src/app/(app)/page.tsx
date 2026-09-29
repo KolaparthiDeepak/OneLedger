@@ -19,13 +19,14 @@ type Summary = { data: Record<string, string> & { income: string; net_expenses: 
 type Bill = { kind: string; id: string; label: string; date: string; amount: string; currency: string; estimated: boolean; overdue: boolean; confirmed?: boolean; href: string; detail: string };
 type Safe =
   | { available: false; reason: string; message: string }
-  | { available: true; currency: string; liquid_balance: string; until: string; until_label: string | null; days_left: number; obligations: { label: string; date: string; amount: string; kind: string }[]; obligations_total: string; safe_total: string; per_day: string; shortfall: boolean; assumptions: string[] };
+  | { available: true; currency: string; liquid_balance: string; until: string; until_label: string | null; days_left: number; obligations: { label: string; date: string; amount: string; kind: string }[]; obligations_total: string; safe_total: string; per_day: string; shortfall: boolean; assumptions: string[]; income_overdue?: boolean };
 type Budget = { id: string; name: string; spent: string; available: string; percent: string; over: boolean; currency: string };
 type Dashboard = {
   as_of: string;
   period: { start: string; end_exclusive: string; note: string | null };
   summary: Summary;
   previous_summary: Summary;
+  comparison?: { start: string; end_exclusive: string; partial: boolean };
   categories: { data: { total: string; categories: { category_id: string | null; code: string | null; name: string; amount: string; share: string }[] }; provenance: Prov };
   monthly: { data: { months: { month: string; income: string; net_expenses: string; savings: string }[] } };
   balances: { data: { accounts: { account_id: string; name: string; kind: string; nature: string; balance: string | null; derived_through: string | null; status: string; currency: string }[]; unknown_count: number }; provenance: Prov };
@@ -38,15 +39,24 @@ type Dashboard = {
   data_range: { first: string | null; last: string | null };
 };
 
-function Change({ cur, prev }: { cur: string; prev: string }) {
-  // Display-only comparison of two server totals; the authoritative figures are shown alongside.
-  const diff = Number(cur) - Number(prev);
-  if (!Number(prev) || !Number(cur)) return <span className="text-ink-faint">No earlier month to compare</span>;
-  const pct = Math.round((diff / Math.abs(Number(prev))) * 100);
-  return <span>{pct > 0 ? `${pct}% more than` : pct < 0 ? `${-pct}% less than` : "About the same as"} the month before</span>;
+function comparisonLabel(c: Dashboard["comparison"]): string {
+  if (!c?.partial) return "the month before";
+  // Month in progress: name the same days of the previous month, e.g. "1–29 Aug".
+  const last = new Date(`${c.end_exclusive}T00:00:00Z`);
+  last.setUTCDate(last.getUTCDate() - 1);
+  const mon = last.toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" });
+  const first = Number(c.start.slice(8, 10));
+  return first === last.getUTCDate() ? `${first} ${mon}` : `${first}–${last.getUTCDate()} ${mon}`;
 }
 
-function Figure({ label, info, value, cur, prev, tone }: { label: string; info: React.ReactNode; value: string; cur: string; prev: string; tone: "credit" | "debit" }) {
+function Change({ cur, prev, than }: { cur: string; prev: string; than: string }) {
+  // Display-only comparison of two server totals; the authoritative figures are shown alongside.
+  if (!Number(prev)) return <span className="text-ink-faint">Nothing in {than} to compare</span>;
+  const pct = Math.round(((Number(cur) - Number(prev)) / Math.abs(Number(prev))) * 100);
+  return <span>{pct > 0 ? `${pct}% more than` : pct < 0 ? `${-pct}% less than` : "About the same as"} {than}</span>;
+}
+
+function Figure({ label, info, value, cur, prev, than, tone }: { label: string; info: React.ReactNode; value: string; cur: string; prev: string; than: string; tone: "credit" | "debit" }) {
   return (
     <div className="min-w-0 py-5 sm:py-1">
       <div className="flex items-center text-sm font-medium text-ink-soft">
@@ -55,7 +65,7 @@ function Figure({ label, info, value, cur, prev, tone }: { label: string; info: 
         <InfoTip label={`What is ${label}?`}>{info}</InfoTip>
       </div>
       <p className="display mt-1.5 text-[2.1rem] font-medium leading-none sm:text-[2.6rem]"><Amount value={value} colored={false} signed={false} /></p>
-      <p className="mt-2 text-xs text-ink-faint"><Change cur={cur} prev={prev} /></p>
+      <p className="mt-2 text-xs text-ink-faint"><Change cur={cur} prev={prev} than={than} /></p>
     </div>
   );
 }
@@ -86,18 +96,23 @@ function SafeToSpend({ s }: { s: Safe }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="safe-h" className="flex items-center text-[15px] font-semibold">
           Safe to spend
-          <InfoTip label="How is this worked out?">Your bank, cash and wallet balances minus the bills, EMIs, SIPs and card bills due before {s.until_label ? `your next ${s.until_label} payment` : until}, spread over the days until then. Nothing is invented: every bill it reserves is listed below.</InfoTip>
+          <InfoTip label="How is this worked out?">Your bank, cash and wallet balances minus the bills, EMIs, SIPs and card bills due before {s.until_label ? `your next ${s.until_label} payment` : until} (and in the few days after payday, in case it is late), spread over the days until then. Income that is overdue is not counted on. Nothing is invented: every bill it reserves is listed below.</InfoTip>
         </h2>
         <span className="text-xs text-ink-faint">until {until}{s.until_label ? ` (${s.until_label})` : ""}, {s.days_left} {s.days_left === 1 ? "day" : "days"}</span>
       </div>
       {s.shortfall ? (
-        <p className="mt-2 text-sm text-debit">Bills due before {until} are <span className="num font-semibold">{formatMoney(s.obligations_total, s.currency)}</span>, more than the <span className="num">{formatMoney(s.liquid_balance, s.currency)}</span> in your accounts.</p>
+        <p className="mt-2 text-sm text-debit">The bills kept aside come to <span className="num font-semibold">{formatMoney(s.obligations_total, s.currency)}</span>, more than the <span className="num">{formatMoney(s.liquid_balance, s.currency)}</span> in your accounts.</p>
       ) : (
         <div className="mt-2 flex flex-wrap items-end gap-x-6 gap-y-2">
           <p><span className="display text-[2.3rem] font-medium leading-none"><Amount value={s.per_day} currency={s.currency} colored={false} signed={false} /></span><span className="ml-1.5 text-sm text-ink-soft">a day</span></p>
           <p className="pb-1 text-sm text-ink-soft"><span className="num font-medium text-ink">{formatMoney(s.safe_total, s.currency)}</span> in total after <span className="num">{formatMoney(s.obligations_total, s.currency)}</span> of bills</p>
         </div>
       )}
+      {s.assumptions.length ? (
+        <ul className={cx("mt-3 flex flex-col gap-1 text-xs", s.income_overdue ? "text-review" : "text-ink-soft")}>
+          {s.assumptions.map((a) => <li key={a}>{a}</li>)}
+        </ul>
+      ) : null}
       <details className="mt-3 text-sm">
         <summary className="flex items-center gap-1.5 text-ink-soft"><svg aria-hidden viewBox="0 0 20 20" className="chev size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 5l5 5-5 5" /></svg>How this is worked out</summary>
         <div className="mt-2 flex flex-col gap-1 pl-5">
@@ -106,7 +121,6 @@ function SafeToSpend({ s }: { s: Safe }) {
             <div key={i} className="flex justify-between gap-3 text-ink-soft"><span className="truncate">{formatDate(o.date, false)} · {o.label}</span><Amount value={negate(o.amount)} currency={s.currency} colored={false} /></div>
           ))}
           <div className="flex justify-between gap-3 border-t border-rule pt-1 font-medium"><span>Left to spend</span><Amount value={s.safe_total} currency={s.currency} colored={false} signed={false} /></div>
-          {s.assumptions.length ? <ul className="mt-1 list-disc pl-4 text-xs text-ink-faint">{s.assumptions.map((a) => <li key={a}>{a}</li>)}</ul> : null}
         </div>
       </details>
     </section>
@@ -180,6 +194,7 @@ function HomeInner() {
 
   const s = data.summary.data;
   const p = data.previous_summary.data;
+  const than = comparisonLabel(data.comparison);
   const range = `start_date=${data.period.start}&end_date_exclusive=${data.period.end_exclusive}`;
   const categories = data.categories.data.categories.slice(0, 8).map((c) => ({ key: c.category_id ?? "none", code: c.code, label: c.name, amount: c.amount, share: c.share, href: `/transactions?category_id=${c.category_id ?? ""}&${range}` }));
   if (Number(s.unclassified_outflow) > 0) {
@@ -241,9 +256,9 @@ function HomeInner() {
               </div>
               {data.period.note ? <p className="mt-0.5 pl-10 text-xs text-ink-faint">{data.period.note}</p> : null}
               <div className="mt-4 grid grid-cols-1 divide-y divide-rule border-t border-rule sm:mt-5 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:border-t-0 [&>*:last-child]:sm:pl-7">
-                <Figure label="Money in" tone="credit" value={moneyIn(s)} cur={moneyIn(s)} prev={moneyIn(p)}
+                <Figure label="Money in" tone="credit" value={moneyIn(s)} cur={moneyIn(s)} prev={moneyIn(p)} than={than}
                   info={<>Income you received this month, such as salary, interest and dividends, plus money received that isn&apos;t categorised yet. Money moved in from your own accounts, loans you take, repayments from friends and things you sell are not counted. Refunds lower Spent instead.</>} />
-                <Figure label="Spent" tone="debit" value={spent(s)} cur={spent(s)} prev={spent(p)}
+                <Figure label="Spent" tone="debit" value={spent(s)} cur={spent(s)} prev={spent(p)} than={than}
                   info={<>What you spent this month minus refunds, plus money that went out and isn&apos;t categorised yet. Transfers between your own accounts, cash moved into your wallet, credit-card bill payments (the card purchases are already counted), investments, friends&apos; shares of a bill and the principal part of loan EMIs are not counted.</>} />
               </div>
               <div className="border-t border-dashed border-rule pt-1 sm:mt-5">

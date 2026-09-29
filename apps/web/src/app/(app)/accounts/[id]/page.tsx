@@ -66,7 +66,7 @@ export default function AccountDetail({ params }: { params: Promise<{ id: string
                 <p className="display text-[2.4rem] font-medium leading-none"><Amount value={a.balance} currency={a.currency} colored={false} signed={false} /></p>
                 <p className="mt-1 text-xs text-ink-faint">
                   Last confirmed balance on {formatDate(a.balance_observed_as_of)}
-                  {a.transactions_after_snapshot ? `, plus ${a.transactions_after_snapshot} later transactions through ${formatDate(a.balance_as_of)}` : ""}.
+                  {a.transactions_after_snapshot ? `, plus ${a.transactions_after_snapshot} later ${a.transactions_after_snapshot === 1 ? "transaction" : "transactions"} through ${formatDate(a.balance_as_of)}` : ""}.
                 </p>
               </>
             )}

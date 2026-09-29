@@ -72,7 +72,7 @@ export default function CardsPage() {
                 ) : null}
                 <NextBill bill={bills?.find((b) => b.kind === "card" && b.id === c.id)} currency={c.currency} />
                 <p className="mt-3 text-xs text-ink-faint">
-                  {c.statement_day ? <>Statement on day {c.statement_day} of each month{c.payment_due_days ? `, due ${c.payment_due_days} days later` : ""}. </> : "No billing dates yet, so the next bill can't be estimated. "}
+                  {c.statement_day ? <>Statement on day {c.statement_day} of each month{c.payment_due_days ? `, due ${c.payment_due_days} ${c.payment_due_days === 1 ? "day" : "days"} later` : ""}. </> : "No billing dates yet, so the next bill can't be estimated. "}
                   <button type="button" className="underline underline-offset-2 hover:text-ink" onClick={() => setCycleFor(c)}>{c.statement_day ? "Change" : "Set billing dates"}</button>
                 </p>
                 <Button className="mt-4" size="sm" onClick={() => setStmtFor(c)}><Icon name="plus" className="size-4" />Add statement</Button>

@@ -187,10 +187,14 @@ def upcoming_bills(db: Session, owner_id: uuid.UUID, today: date, days: int = 35
     """Money that will leave in the next ``days``: recurring payments, card bills and loan EMIs.
 
     A card bill replaces the recurring "card bill" payment it would otherwise duplicate, and a loan's
-    scheduled EMI replaces a detected recurring EMI of the same amount.
+    scheduled EMI replaces a detected recurring EMI of the same amount. A regular cash withdrawal is
+    kind "cash" when you keep a cash wallet: the money moves into it, so it is not a bill.
     """
+    from .cash import primary_cash_wallet
+
     horizon = today + timedelta(days=days)
     cat = load_context(db, owner_id)
+    has_wallet = primary_cash_wallet(db, owner_id) is not None
     cards = _card_obligations(db, owner_id, today, horizon)
     loans = _loan_obligations(db, owner_id, today, horizon)
     loan_amounts = {Decimal(x["amount"]) for x in loans}
@@ -212,6 +216,25 @@ def upcoming_bills(db: Session, owner_id: uuid.UUID, today: date, days: int = 35
             continue
         due = ss.roll_forward(r.expected_next_date, r.cadence, today - timedelta(days=1))
         if due > horizon:
+            continue
+        if code in ("CASH", "TRANSFERS_CASH"):
+            items.append(
+                {
+                    "kind": "cash" if has_wallet else "recurring",
+                    "id": str(r.id),
+                    "label": r.label,
+                    "date": due,
+                    "amount": str(-r.typical_amount),
+                    "currency": r.currency,
+                    "estimated": True,
+                    "overdue": False,
+                    "confirmed": r.state == "ACCEPTED",
+                    "href": "/recurring",
+                    "detail": f"Cash withdrawal from {account_name}"
+                    + (", moves to your cash wallet" if has_wallet else ""),
+                    "type": r.recurrence_type.value,
+                }
+            )
             continue
         items.append(
             {
@@ -236,7 +259,8 @@ def upcoming_bills(db: Session, owner_id: uuid.UUID, today: date, days: int = 35
 # --- Safe to spend -------------------------------------------------------------------------------
 
 
-def _next_income(db: Session, owner_id: uuid.UUID, today: date) -> tuple[date | None, str | None]:
+def _next_income(db: Session, owner_id: uuid.UUID, today: date) -> tuple[date | None, str | None, str | None]:
+    """The next regular income date and its label, or a note saying why none is counted on."""
     recs = db.scalars(
         select(RecurringTransaction).where(
             RecurringTransaction.owner_id == owner_id,
@@ -249,9 +273,19 @@ def _next_income(db: Session, owner_id: uuid.UUID, today: date) -> tuple[date | 
         r for r in recs if r.cadence == RecurrenceCadence.MONTHLY
     ]
     if not salary:
-        return None, None
-    best = min(salary, key=lambda r: ss.roll_forward(r.expected_next_date, r.cadence, today))
-    return ss.roll_forward(best.expected_next_date, best.cadence, today), best.label
+        return None, None, None
+    expected = [(ss.next_income_date(r.expected_next_date, r.cadence, today), r) for r in salary]
+    on_time = [(d, r) for d, r in expected if d is not None]
+    if on_time:
+        d, best = min(on_time, key=lambda x: x[0])
+        return d, best.label, None
+    late = min(salary, key=lambda r: r.expected_next_date)
+    return (
+        None,
+        None,
+        f"{late.label} was expected on {late.expected_next_date:%d %b %Y} and hasn't arrived, so this doesn't "
+        f"count on it and looks {ss.DEFAULT_HORIZON_DAYS} days ahead.",
+    )
 
 
 def safe_to_spend(db: Session, owner_id: uuid.UUID, today: date, currency: str) -> dict[str, Any]:
@@ -286,8 +320,9 @@ def safe_to_spend(db: Session, owner_id: uuid.UUID, today: date, currency: str) 
             f"Last confirmed balance for {names} is from {oldest:%d %b %Y}; "
             "anything spent since then that isn't in OneLedger yet is not included."
         )
-    next_income, income_label = _next_income(db, owner_id, today)
-    bills = upcoming_bills(db, owner_id, today, days=62)
+    next_income, income_label, no_income_note = _next_income(db, owner_id, today)
+    # Cash withdrawals into your own wallet stay within bank, cash and wallets, so they reserve nothing.
+    bills = [b for b in upcoming_bills(db, owner_id, today, days=62) if b["kind"] != "cash"]
     unconfirmed = sum(1 for b in bills if b["kind"] == "recurring" and not b.get("confirmed"))
     if unconfirmed:
         notes.append(f"Includes {plural(unconfirmed, 'detected recurring payment')} you have not confirmed.")
@@ -297,7 +332,7 @@ def safe_to_spend(db: Session, owner_id: uuid.UUID, today: date, currency: str) 
         if b["currency"] == currency
     ]
     liquid = sum((b.balance for b in known if b.balance is not None), Decimal(0))
-    r = ss.compute(liquid, today, next_income, obligations, notes)
+    r = ss.compute(liquid, today, next_income, obligations, notes, no_income_note=no_income_note)
     return {
         "available": True,
         "currency": currency,
@@ -313,6 +348,7 @@ def safe_to_spend(db: Session, owner_id: uuid.UUID, today: date, currency: str) 
         "per_day": str(r.per_day),
         "shortfall": r.shortfall,
         "assumptions": r.assumptions,
+        "income_overdue": no_income_note is not None,
         "calculation_version": ss.SAFE_SPEND_VERSION,
     }
 
@@ -351,7 +387,7 @@ def alerts(
                 }
             )
     for bill in upcoming_bills(db, owner_id, today, days=BILL_ALERT_DAYS):
-        if bill["kind"] == "recurring" and not bill.get("confirmed"):
+        if bill["kind"] == "cash" or (bill["kind"] == "recurring" and not bill.get("confirmed")):
             continue
         found.append(
             {

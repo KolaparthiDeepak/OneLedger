@@ -23,7 +23,8 @@ export default function NetWorthPage() {
   const inr = data.data.totals.INR;
   const assets = data.data.components.filter((c) => c.nature === "ASSET");
   const liabilities = data.data.components.filter((c) => c.nature === "LIABILITY");
-  const reason: Record<string, string> = { partial_coverage: "not enough data", coverage_changed: "accounts changed since then", comparable: "" };
+  // A change is only shown when both dates cover the same accounts completely (financial-semantics.md).
+  const reason: Record<string, string> = { partial_coverage: "some balances were unknown", coverage_changed: "accounts were added or removed since then", comparable: "" };
   return (
     <>
       <PageHeader title="Net worth" description="Assets minus what you owe, using each account's latest known balance. Transfers between your accounts never change it." />
@@ -31,16 +32,16 @@ export default function NetWorthPage() {
         <Panel>
           <p className="text-sm text-ink-soft">Today</p>
           {inr ? <p className="display mt-1 text-[2.6rem] font-medium leading-none"><Amount value={inr.net_worth} colored={false} signed={false} /></p> : <p>No balances yet.</p>}
-          {Object.values(data.data.changes).some((c) => c.available && c.delta.INR) ? (
+          {Object.keys(data.data.changes).length ? (
             <dl className="mt-5 grid grid-cols-3 gap-3 border-t border-rule pt-4 text-sm">
               {Object.entries(data.data.changes).map(([k, c]) => (
-                <div key={k}>
+                <div key={k} className="min-w-0">
                   <dt className="text-xs text-ink-faint">{k === "1y" ? "1 year" : k.replace("d", " days")}</dt>
-                  <dd className="font-medium">{c.available && c.delta.INR ? <Amount value={c.delta.INR} /> : <span className="font-normal text-ink-faint">{reason[c.reason] ? `Not comparable: ${reason[c.reason]}` : "Unavailable"}</span>}</dd>
+                  <dd className="font-medium">{c.available && c.delta.INR ? <Amount value={c.delta.INR} /> : <span className="text-xs font-normal text-ink-faint">{reason[c.reason] ? `Not comparable: ${reason[c.reason]}` : "Unavailable"}</span>}</dd>
                 </div>
               ))}
             </dl>
-          ) : <p className="mt-4 border-t border-rule pt-4 text-sm text-ink-faint">Changes over 30 days, 90 days and a year appear once there is enough history to compare.</p>}
+          ) : null}
           <Provenance p={data.provenance} showWarnings />
         </Panel>
         <Panel title="History">
