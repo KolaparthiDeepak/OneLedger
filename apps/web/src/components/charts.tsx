@@ -3,7 +3,7 @@
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Sankey, Tooltip, XAxis, YAxis } from "recharts";
 import type { LinkProps, NodeProps } from "recharts/types/chart/Sankey";
 import { categoryColor } from "@/lib/categories";
-import { compactINR, formatDate, formatMoney, formatMonth } from "@/lib/format";
+import { compactINR, formatDate, formatMoney, formatMonth, shortINR } from "@/lib/format";
 import { moneyIn, spent } from "@/lib/money";
 
 type MonthPoint = { month: string; income: string; net_expenses: string; unclassified_inflow?: string; unclassified_outflow?: string };
@@ -164,8 +164,10 @@ type SankeyNodeIn = { key: string; name: string; group: string };
 /** Where money came from and where it went in a period. */
 export function CashFlowSankey({ nodes, links }: { nodes: SankeyNodeIn[]; links: { source: number; target: number; value: string }[] }) {
   const data = { nodes: nodes.map((n) => ({ ...n })), links: links.map((l) => ({ source: l.source, target: l.target, value: Number(l.value), raw: l.value })) };
+  // Money kept, invested and loan principal each get their own colour, apart from the spending categories.
+  const SAVING: Record<string, string> = { "out:kept": "var(--credit)", "out:invest": "var(--focus)", "out:principal": categoryColor("LOANS") };
   const colorOf = (n: SankeyNodeIn) =>
-    n.group === "hub" ? "var(--ink)" : n.group === "income" ? "var(--credit)" : n.group === "saving" ? "var(--cat-3)" : n.key === "out:uncat" ? "var(--review)" : categoryColor(n.key.replace(/^out:/, ""));
+    n.group === "hub" ? "var(--ink)" : n.group === "income" ? "var(--credit)" : n.group === "saving" ? (SAVING[n.key] ?? "var(--cat-3)") : n.key === "out:uncat" ? "var(--review)" : categoryColor(n.key.replace(/^out:/, ""));
   const height = Math.max(260, Math.min(620, nodes.length * 34));
   return (
     <figure>
@@ -180,7 +182,7 @@ export function CashFlowSankey({ nodes, links }: { nodes: SankeyNodeIn[]; links:
                   <g key={props.index}>
                     <rect x={props.x} y={props.y} width={props.width} height={Math.max(props.height, 2)} rx={2} fill={colorOf(n)} />
                     <text x={props.x + props.width / 2} y={props.y - 8} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--ink)">
-                      {n.name}<tspan fill="var(--ink-faint)" fontWeight={400} dx={6}>{compactINR(Number(props.payload.value ?? 0))}</tspan>
+                      {n.name}<tspan fill="var(--ink-faint)" fontWeight={400} dx={6}>{shortINR(Number(props.payload.value ?? 0))}</tspan>
                     </text>
                   </g>
                 );
@@ -190,7 +192,7 @@ export function CashFlowSankey({ nodes, links }: { nodes: SankeyNodeIn[]; links:
                   <rect x={props.x} y={props.y} width={props.width} height={Math.max(props.height, 2)} rx={2} fill={colorOf(n)} />
                   <text x={right ? props.x + props.width + 8 : props.x - 8} y={props.y + props.height / 2} textAnchor={right ? "start" : "end"} dominantBaseline="middle" fontSize={12} fill="var(--ink)">
                     {n.name}
-                    <tspan fill="var(--ink-faint)" dx={6}>{compactINR(Number(props.payload.value ?? 0))}</tspan>
+                    <tspan fill="var(--ink-faint)" dx={6}>{shortINR(Number(props.payload.value ?? 0))}</tspan>
                   </text>
                 </g>
               );
@@ -217,9 +219,22 @@ export function CashFlowSankey({ nodes, links }: { nodes: SankeyNodeIn[]; links:
   );
 }
 
-/** Spending per day in a period (bars), with the day's exact amount on hover. */
-export function DailyBars({ days }: { days: { date: string; spent: string }[] }) {
-  const data = days.map((d) => ({ label: d.date.slice(8), v: Number(d.spent), raw: d }));
+/** Spending per day in a period (bars), with the day's exact amount on hover. Every day of the period
+ * gets a slot, so days with no spending show as gaps and the axis is a real timeline. */
+export function DailyBars({ days, start, endExclusive }: { days: { date: string; spent: string }[]; start?: string; endExclusive?: string }) {
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const dates: string[] = [];
+  if (start && endExclusive) {
+    for (let d = new Date(`${start}T00:00:00Z`); d.toISOString().slice(0, 10) < endExclusive && dates.length < 400; d.setUTCDate(d.getUTCDate() + 1)) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
+  } else {
+    dates.push(...days.map((d) => d.date));
+  }
+  const data = dates.map((date) => {
+    const raw = byDate.get(date) ?? { date, spent: "0" };
+    return { label: date.slice(8), v: Number(raw.spent), raw };
+  });
   return (
     <div className="h-36" aria-hidden>
       <ResponsiveContainer width="100%" height="100%">

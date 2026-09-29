@@ -185,3 +185,52 @@ def test_dashboard_can_show_any_month(api):
     assert d["data_range"] == {"first": "2026-07-03", "last": "2026-08-03"}
     assert {"bills", "safe_to_spend", "budgets", "alerts"} <= set(d)
     assert api.get("/analytics/dashboard", params={"month": "2026-13"}).status_code == 422
+
+
+def test_safe_to_spend_does_not_count_on_overdue_salary_or_cash_withdrawals(api):
+    # Review findings N1 and N3: the salary expected last month never came, and ATM withdrawals go
+    # into your own cash wallet, so neither may inflate or reserve the figure.
+    months = [_month_start(-4), _month_start(-3), _month_start(-2)]
+    bank = account(api, "HDFC", opening_date=_iso(months[0] - timedelta(days=1)), opening_balance="10000.00")
+    rows = []
+    for i, m in enumerate(months):
+        rows.append(f"{_d(m)},NEFT CR-ACME TECHNOLOGIES PVT LTD-SALARY,S{i},,125000.00,1.00")
+        rows.append(f"{_d(m + timedelta(days=19))},ATM CASH WDL MG ROAD,A{i},4000.00,,1.00")
+    import_csv(api, bank, csv_bytes(rows))
+    api.ok(api.post("/recurring/detect"))
+    api.ok(
+        api.post(
+            "/accounts",
+            json={
+                "name": "Cash",
+                "kind": "CASH",
+                "opening_date": _iso(TODAY - timedelta(days=1)),
+                "opening_balance": "0",
+            },
+        ),
+        201,
+    )
+    bills = api.ok(api.get("/insights/upcoming", params={"days": 62}))
+    cash = [b for b in bills if "ATM" in b["label"]]
+    assert cash and all(b["kind"] == "cash" and "cash wallet" in b["detail"] for b in cash)
+    safe = api.ok(api.get("/insights/safe-to-spend"))
+    assert safe["available"] and safe["income_overdue"]
+    assert safe["until_label"] is None and safe["days_left"] == 31
+    assert not any("ATM" in o["label"] for o in safe["obligations"])
+    assert any("hasn't arrived" in n for n in safe["assumptions"])
+    assert not any(a["key"].startswith("bill:cash") for a in api.ok(api.get("/insights/alerts")))
+
+
+def test_dashboard_compares_a_month_in_progress_with_the_same_days(api):
+    # Review finding N2: month to date is compared with the same days of last month.
+    account(api, "HDFC", opening_date=_iso(_month_start(-1) - timedelta(days=1)), opening_balance="1000.00")
+    d = api.ok(api.get("/analytics/dashboard"))
+    start, prev_start = _month_start(0), _month_start(-1)
+    expected_end = min(prev_start + timedelta(days=(TODAY - start).days + 1), start)
+    assert d["comparison"] == {
+        "start": _iso(prev_start),
+        "end_exclusive": _iso(expected_end),
+        "partial": expected_end < start,
+    }
+    past = api.ok(api.get("/analytics/dashboard", params={"month": prev_start.strftime("%Y-%m")}))
+    assert past["comparison"]["partial"] is False

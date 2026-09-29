@@ -196,6 +196,10 @@ def dashboard(
         month_ = month_range(latest.year, latest.month)
         period_note = f"No transactions yet this month; showing {latest:%B %Y}, the latest month with data."
     prev = month_.previous()
+    if month_.contains(today):
+        # A month in progress is compared with the same days of the previous month, not all of it.
+        days_in = (today - month_.start).days + 1
+        prev = DateRange(prev.start, min(prev.start + timedelta(days=days_in), prev.end_exclusive))
     safe = insights.safe_to_spend(a.db, a.owner_id, today, cur)
     out = {
         "as_of": today.isoformat(),
@@ -206,6 +210,11 @@ def dashboard(
         },
         "summary": reports.summary_report(a.db, a.owner_id, tz, cur, month_),
         "previous_summary": reports.summary_report(a.db, a.owner_id, tz, cur, prev),
+        "comparison": {
+            "start": prev.start.isoformat(),
+            "end_exclusive": prev.end_exclusive.isoformat(),
+            "partial": prev.end_exclusive < month_.start,
+        },
         "categories": reports.category_breakdown(a.db, a.owner_id, tz, cur, month_),
         "monthly": reports.monthly_series(a.db, a.owner_id, tz, cur, month_.start, 6),
         "balances": reports.balances_report(a.db, a.owner_id, tz, today),

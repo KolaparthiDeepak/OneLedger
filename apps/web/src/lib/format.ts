@@ -56,6 +56,18 @@ export function compactINR(n: number): string {
   return `${s}₹${a.toFixed(0)}`;
 }
 
+/** Short amounts for chart labels that name a value (not axis ticks): ₹1.25L, ₹4.6k. Display only. */
+export function shortINR(n: number): string {
+  const a = Math.abs(n);
+  const s = n < 0 ? "−" : "";
+  const trim = (x: number, dp: number) => String(Number(x.toFixed(dp))); // 1.25, 1.3, 30 (not "30.00")
+  if (a >= 1e7) return `${s}₹${trim(a / 1e7, 2)}Cr`;
+  if (a >= 1e5) return `${s}₹${trim(a / 1e5, 2)}L`;
+  if (a >= 1e4) return `${s}₹${trim(a / 1e3, 0)}k`;
+  if (a >= 1e3) return `${s}₹${trim(a / 1e3, 1)}k`;
+  return `${s}₹${a.toFixed(0)}`;
+}
+
 export function isNegative(value: string | null | undefined): boolean {
   return !!value && value.trim().startsWith("-") && !/^-0*(\.0*)?$/.test(value.trim());
 }

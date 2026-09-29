@@ -167,7 +167,7 @@ function StatsInner() {
         error ? <ErrorNote error={error} /> : !spend ? <Loading /> : (
           <div className="flex flex-col gap-6">
             {daily && daily.days.length ? (
-              <Panel title="Spent each day"><DailyBars days={daily.days} /></Panel>
+              <Panel title="Spent each day"><DailyBars days={daily.days} start={p.start} endExclusive={p.endExclusive} /></Panel>
             ) : null}
             <Panel title="By category">
               <Breakdown b={spend} total={spendTotal} caption="Categorised" range={range} effect="expense" />
