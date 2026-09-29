@@ -79,6 +79,8 @@ _TREE: list[tuple[str, str, E, list[tuple[str, str]]]] = [
         [
             ("TRANSFERS_SELF", "Own Account Transfer"),
             ("TRANSFERS_CARD_PAYMENT", "Credit Card Payment"),
+            ("TRANSFERS_CASH", "Cash Withdrawal"),
+            ("TRANSFERS_SHARED", "Shared with Others"),
         ],
     ),
     ("CASH", "Cash", E.EXPENSE, []),

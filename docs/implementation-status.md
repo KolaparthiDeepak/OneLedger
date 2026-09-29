@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 28 Sep 2026. Latest migration revision: `0002`.
+Last updated: 29 Sep 2026. Latest migration revision: `0012`.
 
 "Verified" means a test or command in this repository exercised it in this session.
 "Implemented" means the code exists but was not exercised end to end. "Unverified" means it
@@ -10,13 +10,13 @@ depends on infrastructure that was not available.
 
 | Check | Command | Result |
 |---|---|---|
-| Lint / format | `uv run ruff check . && uv run ruff format --check .` | pass (118 files) |
-| Types (Python, strict) | `uv run mypy apps/api/src packages` ; `uv run mypy apps/mcp/src` | pass (90 files) |
+| Lint / format | `uv run ruff check . && uv run ruff format --check .` | pass (141 files) |
+| Types (Python, strict) | `uv run mypy apps/api/src packages` ; `uv run mypy apps/mcp/src` | pass (97 files) |
 | Types (web) | `cd apps/web && npx tsc --noEmit` | pass |
-| Backend tests (real PostgreSQL 15, runtime role with RLS) | `uv run pytest tests -q` | 124 passed |
+| Backend tests (real PostgreSQL 15, runtime role with RLS) | `uv run pytest tests -q` | 171 passed |
 | Migrations | `alembic downgrade base` then `upgrade head` on `oneledger_test` | pass |
 | Web production build | `npm run build` | pass (26 routes) |
-| Browser e2e (Playwright, Chromium) | `./scripts/e2e.sh` | 9 passed (first run + import/re-import, BFF checks, card matching, loan EMI split + prepayment simulation, rules dry-run, budgets/net worth/settings, delete import, tags + bulk categorise, invite a person) |
+| Browser e2e (Playwright, Chromium) | `./scripts/e2e.sh` | 18 passed (first run + import/re-import, BFF checks, card matching, loan EMIs matched automatically + lender figures + prepayment simulation, rules dry-run, budgets/net worth/settings, delete import, tags + bulk categorise, invite a person, quick add with a sum + template, manual transfer, calendar, stats, sharing a bill, receipts, budget suggestions + alerts, password change, phone + button) |
 | Backup + restore drill | `scripts/backup.sh`, `scripts/restore.sh` into an isolated DB | pass (66 txns, schema 0002) |
 | Key rotation | `tests/security/test_key_rotation.py` | pass |
 | Performance, 100,000 transactions, local laptop, warm | curl ×6 per endpoint | transaction page median 8–20 ms; yearly summary 48 ms; dashboard 145 ms (targets 500 ms / 1 s) |
@@ -81,6 +81,32 @@ Supabase Storage; npm instead of pnpm; hand-written components instead of shadcn
 - Invite links (Settings → People) let someone create their own separate ledger; migration `0007_invites`.
 - Sign-in shows signed-out and session-expired notices and a password toggle; Settings can sign out all other devices.
 
+## Additions (29 Sep 2026, after the product review)
+
+Correctness fixes, each with regression tests:
+
+- **EMIs are matched to loans automatically** (`tests/integration/test_loan_matching.py`): debits that
+  are exactly the EMI near a due date are split into principal and interest when the loan is added and
+  after every import; unclear ones go to Review; lender figures replace estimates; "Not this loan"
+  undoes it. Previously the whole EMI counted as spending unless linked by hand.
+- **A card bill appears once in Recurring**, named after the card; the receiving side of any transfer is
+  no longer a recurring item; stale suggestions are pruned (`test_recurring_transfers.py`, migration `0010`).
+- **ATM withdrawals move into a cash wallet** when you keep one (`test_cash_wallet.py`, migration `0011`).
+- **Net worth history starts from recorded balances**, not the first daily snapshot (`test_net_worth_history.py`).
+- Messages say "1 account" / "3 accounts" instead of "account(s)"; recurring names keep acronyms (SBI, ATM, SIP).
+
+New features: quick add (expense / income / transfer, amounts as sums, saved templates, save and add
+another, phone "+" button); transactions calendar, month bar with totals and daily subtotals; Stats
+(week/month/year, category donut with sub-category drill-down, daily spending, cash-flow diagram);
+Home month switcher, safe to spend, bills coming up, budgets at a glance and alerts; alerts bell;
+budget suggestions and rollover; goals editing and progress rings; card billing dates and next bill;
+loan summary, yearly principal/interest chart and full schedule; account balance chart; shared
+expenses with people and settling up; receipt attachments; SIP-to-holding, AMFI mutual fund prices and
+annual return; change password, two-step sign-in from Settings, grouped sessions; full JSON export;
+installable web app (manifest and icons); three more read-only AI/MCP tools (upcoming bills, safe to
+spend, shared balances). Migration `0012` adds templates, attachments, people and alert dismissals;
+`tests/security/test_rls_coverage.py` checks every owner table forces row-level security.
+
 ## Known limitations
 
 - No bank connections: data comes only from imported statements and manual entries.
@@ -91,6 +117,13 @@ Supabase Storage; npm instead of pnpm; hand-written components instead of shadcn
 - Realised gains need lot tracking (not modelled); sales make gains "unknown".
 - The AI assistant has only been tested with a stubbed model and a fake HTTP transport; no live provider call has been made.
 - Remote (HTTP) MCP with OAuth is not implemented; MCP is local stdio.
+- No passkeys (WebAuthn) yet; sign-in is password plus optional TOTP.
+- The installed web app has no service worker by design (financial data is never cached on the
+  device), so it needs a connection.
+- Settling up links a statement credit through the API (`transaction_id`); the People screen adds
+  settlements by hand.
+- Imports still need the account chosen by hand; the account is not detected from the file.
+- Mutual fund prices need the AMFI scheme code and units; other instruments use recorded values.
 
 ## Next recommended steps
 

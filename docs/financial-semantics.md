@@ -92,6 +92,50 @@ never assigns transfer, investment, loan-principal or adjustment categories, nev
 going out as income, and never overrides your own choices. AI-set categories are marked "by AI",
 survive rule re-runs unless a rule matches, and can be changed at any time.
 
+## Loan EMIs are matched automatically
+
+Once a loan exists, a bank debit is its EMI when the amount is exactly the EMI and the date is
+within 5 days of a due date after the loan's opening-balance date. If the description also names the
+lender or says EMI/loan/NACH/ECS, it is recorded straight away with an **estimated** split (interest
+from the outstanding balance and rate); otherwise it waits in Review ("Possible loan EMIs"). This
+runs after each import and when a loan is added, so statements imported earlier are matched too.
+Debits the owner categorised as something else, debits already in a transfer and suggestions the
+owner dismissed are never touched. Entering the lender's figures replaces an estimate; "Not this
+loan" undoes the split and removes the loan-account movement.
+
+## Cash wallet
+
+With a cash wallet (an account of kind CASH), an ATM withdrawal from a bank account becomes a transfer
+into the wallet (category "Cash Withdrawal"), using a wallet credit the owner already entered for the
+same amount within a day, or a derived "Cash from ATM" movement. Spending is then what is recorded
+from the wallet. Withdrawals dated on or before the wallet's opening balance date are left alone
+(that balance includes them). Without a wallet, withdrawals stay in the "Cash" spending category.
+
+## Sharing an expense with people
+
+Each person has their own asset account; its balance is what they owe you (negative: what you owe
+them). Sharing a payment splits it: your part keeps its spending category, each person's part is a
+transfer into their account ("Shared with Others"). When they paid for you, your share is spending
+recorded on their account. Settling up is a transfer between your bank or cash account and theirs,
+so repayments are never income and paying someone back is never spending again.
+
+## Planning figures
+
+- **Budget rollover** (per budget, off by default): what was left (or overspent) in each earlier
+  month since the budget started, up to 12 months, is added to this month's available amount.
+- **Safe to spend** = known bank, cash and wallet balances − bills, EMIs, SIPs and card bills due
+  before the next income (a detected salary or monthly credit; otherwise 31 days ahead), divided by
+  the days until then and rounded down. Every reserved bill is listed; accounts with unknown or old
+  confirmed balances are named in the assumptions.
+- **Upcoming bills**: confirmed and detected recurring payments out, card bills from statements (or
+  estimated from the billing cycle and current outstanding), and each loan's next EMI. A card bill
+  replaces the matching recurring "card bill" payment and a loan EMI replaces a detected EMI of the
+  same amount, so nothing is listed twice.
+- **Net worth history**: daily snapshots, plus month-end points rebuilt with the same calculation from
+  recorded balances for the time before snapshots began; points with an unknown balance are partial.
+- **Annual return (XIRR)** of a holding: from dated contributions, withdrawals, dividends and the
+  latest valuation; a display figure, never part of any total.
+
 ## Loans
 
 EMI = P·r·(1+r)ⁿ / ((1+r)ⁿ−1) with r = annual rate/12 (P/n at 0%). Interest is rounded per

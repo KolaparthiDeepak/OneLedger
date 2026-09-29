@@ -26,6 +26,7 @@ function Upload() {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [showOld, setShowOld] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -73,10 +74,17 @@ function Upload() {
         <p className="mt-3 text-xs text-ink-faint">CSV, Excel (.xls, .xlsx) or text PDF, up to 20 MB. Password-protected PDFs and scanned images are not supported.</p>
         {err ? <div className="mt-3"><ErrorNote error={err} /></div> : null}
       </Panel>
-      <h2 className="mb-3 mt-10 text-[15px] font-semibold">Recent imports</h2>
+      <div className="mb-3 mt-10 flex items-baseline justify-between gap-3">
+        <h2 className="text-[15px] font-semibold">Recent imports</h2>
+        {imports?.some((i) => i.state === "DELETED" || i.state === "CANCELLED") ? (
+          <button className="text-sm text-ink-soft underline underline-offset-2 hover:text-ink" onClick={() => setShowOld(!showOld)}>
+            {showOld ? "Hide cancelled and deleted" : `Show cancelled and deleted (${imports.filter((i) => i.state === "DELETED" || i.state === "CANCELLED").length})`}
+          </button>
+        ) : null}
+      </div>
       {error ? <ErrorNote error={error} /> : !imports ? <Loading /> : imports.length === 0 ? <p className="text-sm text-ink-soft">No imports yet. Your uploaded statements will be listed here.</p> : (
         <ul className="rounded-xl border border-rule bg-surface px-5">
-          {imports.map((i) => (
+          {imports.filter((i) => showOld || (i.state !== "DELETED" && i.state !== "CANCELLED")).map((i) => (
             <li key={i.id} className={cx("border-b border-rule py-3 last:border-0", i.state === "DELETED" && "opacity-60")}>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <span aria-hidden className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-sunken text-[10px] font-semibold uppercase text-ink-soft">{i.format}</span>

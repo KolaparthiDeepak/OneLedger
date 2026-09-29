@@ -7,10 +7,10 @@ const ALLOWED = [
   "me", "auth/mfa", "auth/sessions", "accounts", "transactions", "categories", "rules", "merchants", "tags",
   "review", "transfers", "relations", "imports", "analytics", "invites",
   "cards", "loans", "investments", "recurring", "budgets", "goals", "forecast", "anomalies", "tokens", "audit",
-  "export", "ai", "jobs",
+  "export", "ai", "jobs", "insights", "templates", "attachments", "people", "auth/password", "auth/mfa-settings",
 ];
 
-const PASS_RESPONSE_HEADERS = ["content-type", "content-disposition", "x-request-id"];
+const PASS_RESPONSE_HEADERS = ["content-type", "content-disposition", "x-request-id", "x-content-type-options", "content-security-policy"];
 
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;

@@ -27,9 +27,13 @@ from oneledger_domain.enums import (
     AllocationEffect,
     BalanceKind,
     BalanceSource,
+    ClassificationSource,
+    InstrumentType,
     InvestmentAction,
+    ReviewKind,
     TransactionSourceKind,
 )
+from oneledger_domain.xirr import xirr
 from oneledger_shared.errors import ConflictError, NotFoundError, ValidationFailed
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -46,6 +50,7 @@ from .ledger import (
     split_transaction,
 )
 from .reports import account_balances, active_txn_filter
+from .review import resolve_reviews_for
 from .transfers import confirm_pair
 
 # --- Loans ---------------------------------------------------------------------------------------
@@ -258,23 +263,28 @@ def record_loan_payment(
     fees: Decimal,
     is_prepayment: bool,
     actor: str,
+    auto: bool = False,
 ) -> LoanPayment:
     """Split the bank EMI debit into principal / interest / fees and link principal to the loan account.
 
     Lender-reported components take precedence; without them the split is an *estimate* at the
-    current observed outstanding principal and is labelled as such.
+    current observed outstanding principal and is labelled as such. Recording lender figures for a
+    debit that already has an *estimated* split replaces the estimate.
     """
     txn = get_transaction(db, owner_id, transaction_id, lock=True)
     if txn.amount >= 0:
         raise ValidationFailed("Select the debit that paid the loan.", code="PAYMENT_DIRECTION")
     if txn.currency != loan.currency:
         raise ValidationFailed("Currency mismatch.", code="CURRENCY_MISMATCH")
-    if db.scalars(
-        select(LoanPayment).where(LoanPayment.transaction_id == txn.id, LoanPayment.deleted_at.is_(None))
-    ).first():
-        raise ConflictError("This payment is already recorded.", code="PAYMENT_EXISTS")
-    total = -txn.amount
     is_actual = principal is not None and interest is not None
+    existing = db.scalars(
+        select(LoanPayment).where(LoanPayment.transaction_id == txn.id, LoanPayment.deleted_at.is_(None))
+    ).first()
+    if existing is not None:
+        if existing.is_actual or not (is_actual or is_prepayment) or existing.loan_id != loan.id:
+            raise ConflictError("This payment is already recorded.", code="PAYMENT_EXISTS")
+        unrecord_loan_payment(db, owner_id, existing, cat, actor=actor)
+    total = -txn.amount
     if is_prepayment:
         principal, interest, fees = total - fees, Decimal(0), fees
         is_actual = True
@@ -314,7 +324,9 @@ def record_loan_payment(
         )
     if fees:
         parts.append(SplitPart(-fees, AllocationEffect.EXPENSE, cat.category_id("FEES"), "Loan fees", loan_id=loan.id))
-    allocs = split_transaction(db, owner_id, txn, parts, actor, cat)
+    allocs = split_transaction(
+        db, owner_id, txn, parts, actor, cat, source=ClassificationSource.SYSTEM if auto else ClassificationSource.USER
+    )
     principal_alloc = next((a for a in allocs if a.effect == AllocationEffect.LOAN_PRINCIPAL), None)
     if principal_alloc is not None:
         loan_account = get_account(db, owner_id, loan.account_id)
@@ -352,7 +364,15 @@ def record_loan_payment(
             )
             counterpart = allocations_of(db, derived.id)[0]
         confirm_pair(
-            db, owner_id, principal_alloc.id, counterpart.id, cat, actor=actor, method="MANUAL", reason="loan_payment"
+            db,
+            owner_id,
+            principal_alloc.id,
+            counterpart.id,
+            cat,
+            actor=actor,
+            method="AUTO" if auto else "MANUAL",
+            reason="loan_payment",
+            evidence={"loan_id": str(loan.id)},
         )
     payment = LoanPayment(
         owner_id=owner_id,
@@ -364,12 +384,173 @@ def record_loan_payment(
         fees=fees,
         prepayment=principal if is_prepayment else Decimal(0),
         is_actual=is_actual,
-        source="USER" if is_actual else "ESTIMATE",
+        source="USER" if is_actual else ("AUTO_ESTIMATE" if auto else "ESTIMATE"),
     )
     db.add(payment)
     db.flush()
+    resolve_reviews_for(db, owner_id, [txn.id], kinds=[ReviewKind.LOAN_PAYMENT_SUGGESTION], resolution="recorded")
     audit(db, owner_id, actor, "loan.payment", "loan", loan.id, ["payments"])
     return payment
+
+
+def unrecord_loan_payment(
+    db: Session, owner_id: uuid.UUID, payment: LoanPayment, cat: CategorizationContext, *, actor: str
+) -> None:
+    """Undo a recorded payment: void its principal transfer, drop the derived loan-account movement and
+    return the bank debit to one ordinary, re-categorised allocation."""
+    from datetime import UTC, datetime
+
+    from .transfers import reset_to_single_allocation
+
+    payment.deleted_at = datetime.now(UTC)
+    if payment.transaction_id is not None:
+        txn = get_transaction(db, owner_id, payment.transaction_id, lock=True)
+        reset_to_single_allocation(db, owner_id, txn, cat, reason="loan_payment_removed")
+    audit(db, owner_id, actor, "loan.payment_remove", "loan", payment.loan_id, ["payments"])
+
+
+# EMI debits are matched to a loan only when the amount is exactly the EMI and the date is within
+# this many days of a scheduled due date. They are recorded automatically only when the description
+# also points at a loan (lender name or loan words); otherwise they wait in Review.
+EMI_DATE_WINDOW_DAYS = 5
+_LOAN_WORDS = ("EMI", "LOAN", "NACH", "ECS", "MANDATE", "HOUSING FIN", "HFC")
+
+
+def _due_dates(loan: Loan, start: date, end: date) -> list[date]:
+    from oneledger_domain.periods import add_months
+
+    out: list[date] = []
+    for i in range(loan.tenure_months + 24):
+        d = add_months(loan.first_emi_date, i)
+        if d > end:
+            break
+        if d >= start:
+            out.append(d)
+    return out
+
+
+def _mentions_loan(loan: Loan, description: str) -> bool:
+    text = description.upper()
+    lender = loan.lender.upper().strip()
+    return (len(lender) >= 3 and lender in text) or any(w in text for w in _LOAN_WORDS)
+
+
+def match_loan_payments(
+    db: Session,
+    owner_id: uuid.UUID,
+    cat: CategorizationContext,
+    *,
+    actor: str,
+    loan_ids: list[uuid.UUID] | None = None,
+    start: date | None = None,
+    end_exclusive: date | None = None,
+) -> dict[str, int]:
+    """Find EMI debits for each loan; record clear ones (estimated split) and put the rest in Review.
+
+    Only debits after the loan's opening balance date are considered, because that balance already
+    includes earlier payments. A debit is never matched twice, never taken from a confirmed transfer,
+    and a suggestion the owner dismissed is never raised again.
+    """
+    from datetime import timedelta
+
+    from oneledger_db.models import ReviewItem
+
+    from .ledger import active_leg_allocation_ids
+    from .review import open_review
+
+    stats = {"recorded": 0, "suggested": 0}
+    q = select(Loan).where(Loan.owner_id == owner_id, Loan.deleted_at.is_(None))
+    if loan_ids:
+        q = q.where(Loan.id.in_(loan_ids))
+    loans = list(db.scalars(q))
+    if not loans:
+        return stats
+    taken = set(
+        db.scalars(
+            select(LoanPayment.transaction_id).where(LoanPayment.owner_id == owner_id, LoanPayment.deleted_at.is_(None))
+        )
+    )
+    window = timedelta(days=EMI_DATE_WINDOW_DAYS)
+    for loan in loans:
+        lo = max(loan.opening_date + timedelta(days=1), (start or loan.opening_date) - window)
+        hi = end_exclusive + window if end_exclusive else None
+        cq = (
+            select(Transaction)
+            .join(Account, Account.id == Transaction.account_id)
+            .where(
+                Transaction.owner_id == owner_id,
+                active_txn_filter(),
+                Transaction.amount == -loan.emi_amount,
+                Transaction.currency == loan.currency,
+                Transaction.transaction_date >= lo,
+                Account.kind.not_in([AccountKind.LOAN, AccountKind.CREDIT_CARD]),
+            )
+            .order_by(Transaction.transaction_date, Transaction.id)
+        )
+        if hi is not None:
+            cq = cq.where(Transaction.transaction_date < hi)
+        cands = [t for t in db.scalars(cq) if t.id not in taken]
+        if not cands:
+            continue
+        dues = _due_dates(loan, cands[0].transaction_date - window, cands[-1].transaction_date + window)
+        by_due: dict[date, list[Transaction]] = {}
+        for t in cands:
+            near = [d for d in dues if abs((t.transaction_date - d).days) <= EMI_DATE_WINDOW_DAYS]
+            if near:
+                by_due.setdefault(min(near, key=lambda d: abs((t.transaction_date - d).days)), []).append(t)
+        for due in sorted(by_due):
+            group = by_due[due]
+            eligible = []
+            for t in group:
+                allocs = allocations_of(db, t.id)
+                if active_leg_allocation_ids(db, [a.id for a in allocs]):
+                    continue
+                if len(allocs) != 1:
+                    continue
+                a = allocs[0]
+                user_set = a.is_locked and a.classification_source == ClassificationSource.USER
+                code = cat.categories_by_id[a.category_id].code if a.category_id in cat.categories_by_id else ""
+                if user_set and not code.startswith(("LOANS", "HOUSING_HOME_LOAN")):
+                    continue  # the owner said this is something else
+                eligible.append(t)
+            if len(eligible) == 1 and _mentions_loan(loan, eligible[0].raw_description):
+                t = eligible[0]
+                try:
+                    record_loan_payment(
+                        db,
+                        owner_id,
+                        loan,
+                        cat,
+                        transaction_id=t.id,
+                        principal=None,
+                        interest=None,
+                        fees=Decimal(0),
+                        is_prepayment=False,
+                        actor=actor,
+                        auto=True,
+                    )
+                except (ValidationFailed, ConflictError):
+                    continue
+                taken.add(t.id)
+                stats["recorded"] += 1
+                continue
+            for t in eligible:
+                key = f"loanpay:{loan.id}:{t.id}"
+                decided = db.scalars(
+                    select(ReviewItem.id).where(ReviewItem.owner_id == owner_id, ReviewItem.dedupe_key == key)
+                ).first()
+                if decided is None and open_review(
+                    db,
+                    owner_id,
+                    ReviewKind.LOAN_PAYMENT_SUGGESTION,
+                    key,
+                    [t.id],
+                    summary=f"Looks like the {loan.lender} {loan.loan_type} EMI due {due:%d %b %Y}.",
+                    related={"loan_id": str(loan.id), "loan_name": f"{loan.lender} {loan.loan_type}".strip()},
+                    evidence={"due_date": due.isoformat(), "emi": str(loan.emi_amount)},
+                ):
+                    stats["suggested"] += 1
+    return stats
 
 
 # --- Credit cards --------------------------------------------------------------------------------
@@ -481,6 +662,18 @@ def holding_summary(db: Session, inv: Investment, today: date) -> dict[str, Any]
     ).first()
     value = v.total_value if v else None
     gain = (value - (contributed + fees)) if (value is not None and cost_known and txs) else None
+    annual: Decimal | None = None
+    if value is not None and v is not None and txs and all(t.trade_date <= v.valuation_date for t in txs):
+        flows: list[tuple[date, Decimal]] = []
+        for t in txs:
+            if t.action in (InvestmentAction.BUY, InvestmentAction.CONTRIBUTION):
+                flows.append((t.trade_date, -(t.gross_amount + t.fees)))
+            elif t.action in (InvestmentAction.SELL, InvestmentAction.WITHDRAWAL, InvestmentAction.DIVIDEND):
+                flows.append((t.trade_date, t.gross_amount - t.fees))
+            elif t.action == InvestmentAction.FEE:
+                flows.append((t.trade_date, -t.gross_amount))
+        flows.append((v.valuation_date, value))
+        annual = xirr(flows)
     return {
         "id": str(inv.id),
         "name": inv.name,
@@ -500,6 +693,9 @@ def holding_summary(db: Session, inv: Investment, today: date) -> dict[str, Any]
         "valuation_source": v.source if v else None,
         "value_is_estimated": v.is_estimated if v else None,
         "unrealized_gain": str(gain) if gain is not None else None,
+        "xirr_percent": str((annual * 100).quantize(Decimal("0.01"))) if annual is not None else None,
+        "instrument_identifier": inv.identifier,
+        "funded_by_recurring": inv.recurring_pattern_key is not None,
         "gain_note": None if gain is not None else "Unknown: needs a valuation and complete purchase cost.",
         "include_in_net_worth": inv.include_in_net_worth,
         "version": inv.version,
@@ -529,9 +725,115 @@ def link_investment_transaction(
         a.effect, a.category_id = AllocationEffect.INVESTMENT, cat.category_id("INVESTMENTS")
     a.investment_id = inv.id
     a.is_locked = True
-    from oneledger_domain.enums import ClassificationSource
-
     a.classification_source = ClassificationSource.USER
     txn.version += 1
     bump_ledger_revision(db, owner_id)
     audit(db, owner_id, actor, "investment.link", "transaction", txn.id, ["effect", "investment_id"])
+
+
+# --- SIPs: holdings funded by a recurring debit ---------------------------------------------------
+
+
+def create_holding_from_recurring(
+    db: Session,
+    owner_id: uuid.UUID,
+    recurring_id: uuid.UUID,
+    *,
+    name: str | None,
+    instrument_type: InstrumentType,
+    identifier: str | None,
+    cat: CategorizationContext,
+    actor: str,
+) -> Investment:
+    """Track a detected SIP as a holding: every past and future debit becomes a contribution to it."""
+    from oneledger_db.models import RecurringTransaction
+
+    r = db.get(RecurringTransaction, recurring_id)
+    if r is None or r.owner_id != owner_id:
+        raise NotFoundError()
+    if r.typical_amount >= 0:
+        raise ValidationFailed("Only regular payments out can fund a holding.", code="NOT_A_PAYMENT")
+    if db.scalars(
+        select(Investment).where(
+            Investment.owner_id == owner_id,
+            Investment.recurring_pattern_key == r.pattern_key,
+            Investment.deleted_at.is_(None),
+        )
+    ).first():
+        raise ConflictError("A holding already tracks this payment.", code="ALREADY_TRACKED")
+    inv = Investment(
+        owner_id=owner_id,
+        instrument_type=instrument_type,
+        name=(name or r.label)[:160],
+        identifier=identifier,
+        currency=r.currency,
+        valuation_mode="MANUAL_TOTAL",
+        recurring_pattern_key=r.pattern_key,
+    )
+    db.add(inv)
+    db.flush()
+    r.state = "ACCEPTED"
+    sync_sip_contributions(db, owner_id, cat, actor=actor, investment_ids=[inv.id])
+    audit(db, owner_id, actor, "investment.from_recurring", "investment", inv.id, ["name"])
+    return inv
+
+
+def sync_sip_contributions(
+    db: Session,
+    owner_id: uuid.UUID,
+    cat: CategorizationContext,
+    *,
+    actor: str,
+    investment_ids: list[uuid.UUID] | None = None,
+) -> int:
+    """Link new debits of each tracked SIP to its holding as contributions. Returns how many were linked."""
+    from oneledger_db.models import RecurringTransaction, RecurringTransactionMember
+
+    from .ledger import active_leg_allocation_ids
+
+    q = select(Investment).where(
+        Investment.owner_id == owner_id, Investment.deleted_at.is_(None), Investment.recurring_pattern_key.is_not(None)
+    )
+    if investment_ids:
+        q = q.where(Investment.id.in_(investment_ids))
+    linked = 0
+    for inv in db.scalars(q).all():
+        r = db.scalars(
+            select(RecurringTransaction).where(
+                RecurringTransaction.owner_id == owner_id, RecurringTransaction.pattern_key == inv.recurring_pattern_key
+            )
+        ).first()
+        if r is None:
+            continue
+        done = set(
+            db.scalars(
+                select(InvestmentTransaction.transaction_id).where(
+                    InvestmentTransaction.investment_id == inv.id, InvestmentTransaction.deleted_at.is_(None)
+                )
+            )
+        )
+        members = db.scalars(
+            select(Transaction)
+            .join(RecurringTransactionMember, RecurringTransactionMember.transaction_id == Transaction.id)
+            .where(RecurringTransactionMember.recurring_id == r.id, active_txn_filter())
+            .order_by(Transaction.transaction_date)
+        ).all()
+        for t in members:
+            if t.id in done or t.amount >= 0:
+                continue
+            allocs = allocations_of(db, t.id)
+            if len(allocs) != 1 or active_leg_allocation_ids(db, [allocs[0].id]):
+                continue
+            db.add(
+                InvestmentTransaction(
+                    owner_id=owner_id,
+                    investment_id=inv.id,
+                    transaction_id=t.id,
+                    action=InvestmentAction.CONTRIBUTION,
+                    trade_date=t.transaction_date,
+                    gross_amount=-t.amount,
+                )
+            )
+            link_investment_transaction(db, owner_id, inv, t.id, InvestmentAction.CONTRIBUTION, cat, actor)
+            linked += 1
+    return linked

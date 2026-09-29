@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useState } from "react";
 import { api, ApiError, useApi } from "@/lib/api";
+import { categoryColor } from "@/lib/categories";
 import { EFFECT_LABEL, formatDate, formatMoney } from "@/lib/format";
+import { Icon } from "./icons";
 import { Amount, Badge, Button, cx, ErrorNote, Field, Input, Select, Sheet } from "./ui";
 
 export type Allocation = {
@@ -30,6 +32,7 @@ export function categoryReason(a: Allocation): string {
     case "TRANSFER_MATCH": return "Matched as a transfer between your accounts";
     case "AI": return `Suggested by AI${a.model ? ` (${a.model.split("/").pop()})` : ""}, ${Number(a.confidence ?? 0) >= 0.9 ? "high" : "medium"} confidence`;
     case "FALLBACK": return "Not categorised yet";
+    case "SYSTEM": return a.category?.code?.startsWith("LOANS") ? "Split by OneLedger from your loan's EMI schedule (an estimate until you enter the lender's figures)" : "Set by OneLedger";
     default: return "Set by OneLedger";
   }
 }
@@ -101,15 +104,24 @@ function Monogram({ t }: { t: Txn }) {
   return <span aria-hidden className={cx("mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold", tone)}>{t.is_transfer ? "⇄" : letter}</span>;
 }
 
-export function TxnList({ items, onOpen, compact, selected, onToggle }: { items: Txn[]; onOpen?: (t: Txn) => void; compact?: boolean; selected?: Set<string>; onToggle?: (t: Txn) => void }) {
+export type DayTotal = { money_in: string; spent: string };
+
+export function TxnList({ items, onOpen, compact, selected, onToggle, dayTotals }: { items: Txn[]; onOpen?: (t: Txn) => void; compact?: boolean; selected?: Set<string>; onToggle?: (t: Txn) => void; dayTotals?: Record<string, DayTotal> }) {
   const rows: React.ReactNode[] = [];
   let lastDay = "";
   for (const t of items) {
     if (!compact && t.transaction_date !== lastDay) {
       lastDay = t.transaction_date;
+      const tot = dayTotals?.[t.transaction_date];
       rows.push(
-        <li key={`d-${t.transaction_date}`} className="sticky top-[49px] z-[1] -mx-5 bg-raised/95 px-5 py-1.5 text-xs font-medium text-ink-soft backdrop-blur first:rounded-t-xl sm:-mx-6 sm:px-6 lg:top-0">
-          {dayLabel(t.transaction_date)}
+        <li key={`d-${t.transaction_date}`} className="sticky top-[49px] z-[1] -mx-4 flex items-baseline justify-between gap-3 bg-raised/95 px-4 py-1.5 text-xs font-medium text-ink-soft backdrop-blur first:rounded-t-xl sm:-mx-6 sm:px-6 lg:top-0">
+          <span>{dayLabel(t.transaction_date)}</span>
+          {tot ? (
+            <span className="num flex gap-3 font-normal">
+              {Number(tot.money_in) ? <span className="text-credit">+{formatMoney(tot.money_in, "INR", { decimals: false })}</span> : null}
+              {Number(tot.spent) ? <span className="text-debit">−{formatMoney(tot.spent, "INR", { decimals: false })}</span> : null}
+            </span>
+          ) : null}
         </li>,
       );
     }
@@ -123,11 +135,14 @@ export function TxnList({ items, onOpen, compact, selected, onToggle }: { items:
           </span>
         ) : <Monogram t={t} />}
         <div className="min-w-0 flex-1">
-          <p className={cx("truncate font-medium", t.deleted && "text-ink-faint line-through")}>{t.merchant ?? t.description}</p>
+          <p className={cx("line-clamp-2 break-words font-medium sm:line-clamp-1", t.deleted && "text-ink-faint line-through")}>{t.merchant ?? t.description}</p>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-ink-faint">
             {compact ? <span>{formatDate(t.transaction_date, false)}</span> : null}
             <span>{t.account.name}</span>
-            <span className={uncategorised ? "font-medium text-review" : undefined}>{uncategorised ? "Not categorised" : categoryLabel(t)}</span>
+            <span className={cx("inline-flex items-center gap-1.5", uncategorised && "font-medium text-review")}>
+              {!uncategorised && !t.is_split ? <span aria-hidden className="inline-block size-2 rounded-full" style={{ background: categoryColor(t.allocations[0]?.category?.code) }} /> : null}
+              {uncategorised ? "Not categorised" : categoryLabel(t)}
+            </span>
             {t.is_transfer ? <Badge>Transfer</Badge> : null}
             {t.status === "PENDING" ? <Badge tone="review">Pending</Badge> : null}
             {t.needs_review ? <Badge tone="review">Review</Badge> : null}
@@ -228,6 +243,8 @@ export function TxnSheet({ id, onClose, onChanged }: { id: string | null; onClos
               </div>
               <div className="divide-y divide-rule rounded-xl border border-rule">
                 <Annotate key={t.version} t={t} tags={tags ?? []} busy={busy} onTagCreated={() => mutateTags()} onSave={(body) => run(() => api(`/transactions/${t.id}`, { method: "PATCH", json: body }), "Notes and tags saved.")} />
+                <Receipts t={t} />
+                <ShareWith t={t} busy={busy} run={run} />
                 <StatementRow origin={t.origin ?? []} />
                 <Pairing t={t} busy={busy} run={run} />
                 <Evidence t={t} />
@@ -427,7 +444,7 @@ function Evidence({ t }: { t: Detail }) {
     <details className="group px-4 text-sm">
       <Summary title="History" hint={t.revisions.length ? `${t.revisions.length} change${t.revisions.length > 1 ? "s" : ""}` : "No changes"} />
       <ul className="flex flex-col gap-1.5 pb-4 text-ink-soft">
-        <li>Added {t.source === "MANUAL" ? "by hand" : t.source === "MANUAL_DERIVED" ? "automatically from a loan payment" : "from a statement"} on {formatDate((t.sources[0]?.created_at ?? "").slice(0, 10))}</li>
+        <li>Added {t.source === "MANUAL" ? "by hand" : t.source === "MANUAL_DERIVED" ? "automatically (the other side of a loan EMI, cash withdrawal or shared bill)" : "from a statement"} on {formatDate((t.sources[0]?.created_at ?? "").slice(0, 10))}</li>
         {t.revisions.map((r) => (
           <li key={r.revision}>Revision {r.revision}: {r.reason} ({Object.keys(r.after).filter((k) => r.after[k] !== r.before[k]).join(", ")})</li>
         ))}
@@ -506,4 +523,154 @@ function Correct({ t, busy, onCancel, onSave }: { t: Detail; busy: boolean; onCa
 
 export function errorMessage(e: unknown) {
   return e instanceof ApiError ? e.message : "Something went wrong.";
+}
+
+
+type Attachment = { id: string; filename: string; content_type: string; size_bytes: number; created_at: string };
+
+function Receipts({ t }: { t: Detail }) {
+  const { data, mutate } = useApi<Attachment[]>(`/transactions/${t.id}/attachments`);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  async function upload(file: File) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      await api(`/transactions/${t.id}/attachments`, { method: "POST", body: form });
+      await mutate();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  async function remove(id: string) {
+    await api(`/attachments/${id}`, { method: "DELETE" });
+    await mutate();
+  }
+  const n = data?.length ?? 0;
+  return (
+    <details className="group px-4 text-sm" open={n > 0}>
+      <Summary title="Receipts" hint={n ? `${n} attached` : "Photo or PDF"} />
+      <div className="flex flex-col gap-3 pb-4">
+        {n ? (
+          <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {data!.map((a) => (
+              <li key={a.id} className="group/att relative overflow-hidden rounded-lg border border-rule bg-sunken">
+                <a href={`/api/bff/attachments/${a.id}`} target="_blank" rel="noreferrer" className="block aspect-square" title={a.filename}>
+                  {a.content_type.startsWith("image/") && a.content_type !== "image/heic" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={`/api/bff/attachments/${a.id}`} alt={`Receipt ${a.filename}`} className="size-full object-cover" loading="lazy" />
+                  ) : (
+                    <span className="flex size-full flex-col items-center justify-center gap-1 p-2 text-center text-xs text-ink-soft"><Icon name="paperclip" className="size-5" /><span className="line-clamp-2 break-all">{a.filename}</span></span>
+                  )}
+                </a>
+                <button type="button" onClick={() => remove(a.id)} aria-label={`Remove ${a.filename}`} className="absolute right-1 top-1 inline-flex size-7 items-center justify-center rounded-md bg-surface/90 text-ink-soft shadow-sm hover:text-debit">
+                  <Icon name="close" className="size-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <label className={cx("inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-dashed border-rule-strong px-3 py-2 text-sm text-ink-soft hover:border-ink-faint hover:text-ink", busy && "opacity-60")}>
+          <Icon name="paperclip" className="size-4" />{busy ? "Uploading…" : "Attach a receipt"}
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,application/pdf" capture="environment" className="sr-only" disabled={busy}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
+        </label>
+        <p className="text-xs text-ink-faint">Stored encrypted with your ledger, up to 5 MB each.</p>
+        {err ? <ErrorNote error={err} /> : null}
+      </div>
+    </details>
+  );
+}
+
+type Person = { id: string; name: string; balance: string };
+
+/** Split a payment with people: their shares are owed to you instead of counted as your spending. */
+function ShareWith({ t, busy, run }: { t: Detail; busy: boolean; run: (fn: () => Promise<unknown>, done?: string) => void }) {
+  const { data: people, mutate: mutatePeople } = useApi<Person[]>("/people");
+  const shared = t.allocations.some((a) => a.category?.code === "TRANSFERS_SHARED" && a.amount.startsWith("-"));
+  const eligible = t.amount.startsWith("-") && !t.is_transfer && (!t.is_split || shared) && t.allocations.every((a) => a.effect === "expense" || a.effect === "unclassified" || shared);
+  const total = t.amount.replace("-", "");
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [includeMe, setIncludeMe] = useState(true);
+  const [newName, setNewName] = useState("");
+  if (!eligible) return null;
+  const ids = Object.keys(picked);
+  function evenSplit(next: Record<string, string>, me: boolean) {
+    const n = Object.keys(next).length + (me ? 1 : 0);
+    if (!n) return next;
+    const cents = Math.round(Number(total) * 100);
+    const each = Math.floor(cents / n);
+    return Object.fromEntries(Object.keys(next).map((k) => [k, (each / 100).toFixed(2)]));
+  }
+  function toggle(id: string) {
+    const next = { ...picked };
+    if (id in next) delete next[id];
+    else next[id] = "";
+    setPicked(evenSplit(next, includeMe));
+  }
+  async function addPerson() {
+    const name = newName.trim();
+    if (!name) return;
+    const p = await api<Person>("/people", { method: "POST", json: { name } });
+    setNewName("");
+    await mutatePeople();
+    setPicked(evenSplit({ ...picked, [p.id]: "" }, includeMe));
+  }
+  const sum = ids.reduce((acc, k) => acc + Math.round(Number(picked[k] || 0) * 100), 0);
+  const over = sum > Math.round(Number(total) * 100);
+  return (
+    <details className="group px-4 text-sm">
+      <Summary title="Split with people" hint={shared ? "Shared" : "Who owes you for this?"} />
+      <div className="flex flex-col gap-3 pb-4">
+        {shared ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-ink-soft">This payment is shared. Only your part counts as spending; the rest is owed to you.</p>
+            <Button size="sm" variant="ghost" busy={busy} onClick={() => run(() => api(`/transactions/${t.id}/share`, { method: "DELETE" }), "No longer shared.")}>Stop sharing</Button>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {(people ?? []).map((p) => (
+                <button key={p.id} type="button" aria-pressed={p.id in picked} onClick={() => toggle(p.id)}
+                  className={cx("rounded-full border px-3 py-1", p.id in picked ? "border-ink bg-accent text-accent-ink" : "border-rule bg-surface text-ink-soft hover:border-ink-faint")}>
+                  {p.name}
+                </button>
+              ))}
+              <span className="inline-flex items-center gap-1">
+                <input aria-label="Add a person" placeholder="Add a person" maxLength={120} value={newName} onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addPerson(); } }}
+                  className="h-8 w-32 rounded-full border border-rule bg-surface px-3 text-sm focus:border-ink focus:outline-none" />
+                {newName.trim() ? <Button size="sm" type="button" onClick={addPerson}>Add</Button> : null}
+              </span>
+            </div>
+            {ids.length ? (
+              <>
+                <label className="flex items-center gap-2 text-ink-soft">
+                  <input type="checkbox" checked={includeMe} onChange={(e) => { setIncludeMe(e.target.checked); setPicked(evenSplit(picked, e.target.checked)); }} />
+                  Split equally including me
+                </label>
+                <ul className="flex flex-col gap-2">
+                  {ids.map((id) => (
+                    <li key={id} className="flex items-center gap-3">
+                      <span className="flex-1">{people?.find((p) => p.id === id)?.name}</span>
+                      <Input aria-label={`Share for ${people?.find((p) => p.id === id)?.name}`} inputMode="decimal" className="w-32 text-right" value={picked[id]}
+                        onChange={(e) => setPicked({ ...picked, [id]: e.target.value.replace(/[^0-9.]/g, "") })} />
+                    </li>
+                  ))}
+                </ul>
+                <p className={cx("text-xs", over ? "text-debit" : "text-ink-faint")}>
+                  Your part: {formatMoney((Math.max(0, Math.round(Number(total) * 100) - sum) / 100).toFixed(2), t.currency)} of {formatMoney(total, t.currency)}
+                  {over ? ". Shares add up to more than the payment." : ""}
+                </p>
+                <Button size="sm" variant="primary" busy={busy} disabled={over || sum <= 0}
+                  onClick={() => run(() => api(`/transactions/${t.id}/share`, { method: "POST", json: { shares: ids.filter((k) => Number(picked[k]) > 0).map((k) => ({ person_id: k, amount: Number(picked[k]).toFixed(2) })) } }), "Shared. What they owe you is on the People page.")}>
+                  Save split
+                </Button>
+              </>
+            ) : <p className="text-xs text-ink-faint">Pick who shared this. Their part is not counted as your spending, and shows as owed to you.</p>}
+          </>
+        )}
+      </div>
+    </details>
+  );
 }

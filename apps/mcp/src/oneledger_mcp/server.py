@@ -191,6 +191,21 @@ def build_server(client: OneLedgerClient) -> MCPServer:
         """Financial goals with targets and current progress."""
         return client.call("get_financial_goals", {})
 
+    @tool
+    def get_upcoming_bills(days: int | None = None) -> str:
+        """Recurring payments, card bills and loan EMIs expected in the next N days (default 30)."""
+        return client.call("get_upcoming_bills", {"days": days})
+
+    @tool
+    def get_safe_to_spend() -> str:
+        """How much can be spent per day until the next income without missing a listed bill."""
+        return client.call("get_safe_to_spend", {})
+
+    @tool
+    def get_shared_balances() -> str:
+        """People the owner shares expenses with and who owes whom."""
+        return client.call("get_shared_balances", {})
+
     return mcp
 
 

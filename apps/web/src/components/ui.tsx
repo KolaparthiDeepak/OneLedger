@@ -88,12 +88,12 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
 }
 
 /** An amount with sign, currency and direction conveyed by text, not colour alone. */
-export function Amount({ value, currency = "INR", className, colored = true, signed = true, absolute = false }: { value: string | null | undefined; currency?: string; className?: string; colored?: boolean; signed?: boolean; absolute?: boolean }) {
+export function Amount({ value, currency = "INR", className, colored = true, signed = true, absolute = false, decimals = true }: { value: string | null | undefined; currency?: string; className?: string; colored?: boolean; signed?: boolean; absolute?: boolean; decimals?: boolean }) {
   const neg = isNegative(value);
   const zero = value == null || /^[-+]?0*(\.0*)?$/.test(value);
   return (
     <span className={cx("num whitespace-nowrap", colored && !zero && (neg ? "text-debit" : "text-credit"), className)}>
-      {formatMoney(value, currency, { signed: signed && !absolute, absolute })}
+      {formatMoney(value, currency, { signed: signed && !absolute, absolute, decimals })}
     </span>
   );
 }

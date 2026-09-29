@@ -119,3 +119,8 @@ def upi_parts(description: str | None) -> tuple[str | None, str | None, str | No
     if payee and not re.search(r"[A-Za-z]{2}", payee):
         payee = None
     return (payee.title() if payee else None), vpa, note
+
+
+def plural(n: int, singular: str, plural_form: str | None = None) -> str:
+    """ "1 account", "3 accounts" -- counts in messages people read, never "account(s)"."""
+    return f"{n} {singular if n == 1 else (plural_form or singular + 's')}"

@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from .enums import AccountNature
 from .money import ZERO
+from .text import plural
 
 CALCULATION_VERSION = "net-worth-v1"
 DEFAULT_STALE_DAYS = 45
@@ -68,9 +69,15 @@ class NetWorth:
     def warnings(self) -> list[str]:
         out: list[str] = []
         if self.missing:
-            out.append(f"{len(self.missing)} component(s) have no balance/valuation on or before {self.as_of}.")
+            out.append(
+                f"{plural(len(self.missing), 'account or holding', 'accounts or holdings')} with no balance "
+                f"or value on or before {self.as_of:%d %b %Y}."
+            )
         if self.stale:
-            out.append(f"{len(self.stale)} component(s) use a balance older than {DEFAULT_STALE_DAYS} days.")
+            out.append(
+                f"{plural(len(self.stale), 'account or holding', 'accounts or holdings')} using a balance "
+                f"older than {DEFAULT_STALE_DAYS} days."
+            )
         if len(self.totals) > 1:
             out.append("Totals are grouped by currency; no FX conversion is applied.")
         return out

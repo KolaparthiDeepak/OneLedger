@@ -289,7 +289,7 @@ function Preview({ imp, onEdit, onChange }: { imp: Imp; onEdit: () => void; onCh
         ) : null}
         {err ? <div className="mt-3"><ErrorNote error={err} /></div> : null}
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button variant="primary" busy={busy} onClick={confirm} disabled={!!c.invalid && !accept}>Import {c.to_import} transactions</Button>
+          <Button variant="primary" busy={busy} onClick={confirm} disabled={!!c.invalid && !accept}>Import {c.to_import} {c.to_import === 1 ? "transaction" : "transactions"}</Button>
           <Button onClick={onEdit}>Change mapping</Button>
           <Button variant="ghost" onClick={() => api(`/imports/${imp.id}/cancel`, { method: "POST" }).then(onChange)}>Cancel import</Button>
         </div>

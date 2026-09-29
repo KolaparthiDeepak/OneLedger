@@ -26,6 +26,10 @@ client, an operator mistake (wrong database, leaked logs).
 | Injection | SQLAlchemy parameters everywhere; LIKE wildcards escaped; rule conditions are typed data, not code or regex | `txn_query.py`, `categorization/rules.py` |
 | XSS | React escaping; answers rendered as text; CSP, `X-Frame-Options: DENY`, `nosniff`, no-referrer | `next.config.ts`, API middleware |
 | AI | Off by default and needs server enablement + owner opt-in + key. Provider endpoints are fixed in code or set by the operator (`AI_CUSTOM_BASE_URL`), never entered in the browser, and redirects are not followed, so settings cannot be used to reach arbitrary hosts. Keys are encrypted per provider. Read-only tools only. Numbers must be references to server-computed metrics; any other figure → answer withheld. Descriptions shared only if opted in. Descriptions are treated as untrusted data. Daily budget, timeouts, tool-round cap | `services/ai.py` |
+| Receipts | Photos and PDFs attached to transactions: type checked against the file's first bytes (JPEG, PNG, WebP, HEIC, PDF only), 5 MB each, 10 per transaction, encrypted like statement uploads, served back with `nosniff`, `no-store` and a locked-down CSP | `routes/entry.py` |
+| Password and two-step sign-in | Change password needs the current one (and MFA when on) and signs out every other device; two-step sign-in can be turned off only with the password and a current code, and never where the server requires it | `routes/auth.py` |
+| Market prices | "Update price" downloads AMFI's public NAV file (no user data, no identifiers sent); the response is parsed as data and cached for six hours | `services/market.py` |
+| Full export | `GET /export/ledger.json` needs the admin scope and MFA when on; owner ids and encrypted blobs are left out | `routes/tokens.py` |
 | Scheduler | Runner endpoint requires `SCHEDULER_SECRET`; job payloads carry IDs only | `routes/internal.py`, `services/jobs.py` |
 | Config | Startup fails on missing/short keys; in preview/production also on wildcard origins, insecure cookies, MFA off, or DB without TLS | `oneledger_shared/config.py` |
 
@@ -43,6 +47,10 @@ client, an operator mistake (wrong database, leaked logs).
 
 ## Tests covering these
 
+`tests/security/test_rls_coverage.py` (every table with an `owner_id` has row-level security
+forced and a policy, so a new table cannot ship unprotected),
+`tests/integration/test_people_and_entry.py` (another ledger cannot reach your people, templates or
+receipts; fake image uploads are rejected),
 `tests/security/test_isolation_auth.py` (cross-owner access through the API and directly as the
 runtime role, auth failures, lockout/rate limits, token scopes, runner auth, formula escaping,
 malicious uploads, SQL-looking search input), `tests/integration/test_ai_and_tools.py`

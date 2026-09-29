@@ -39,6 +39,7 @@ from oneledger_domain.enums import (
     ReviewKind,
     TransactionSourceKind,
 )
+from oneledger_domain.text import plural
 from oneledger_providers.imports import (
     ColumnMapping,
     FileFormat,
@@ -443,7 +444,7 @@ def confirm(
     invalid = int(imp.counts.get("invalid", 0))
     if invalid and not accept_rejections:
         raise ValidationFailed(
-            f"{invalid} row(s) are invalid. Confirm that they should be rejected, or fix the mapping.",
+            f"{plural(invalid, 'row')} could not be read. Confirm that they should be skipped, or fix the mapping.",
             code="IMPORT_HAS_INVALID_ROWS",
             details={"invalid": invalid},
         )
@@ -637,10 +638,23 @@ def _publish(
         stats = run_matching(
             db, owner_id, cat, start=imp.date_min, end_exclusive=imp.date_max + timedelta(days=1), actor="worker"
         )
+        from .products import match_loan_payments
+
+        loans = match_loan_payments(
+            db, owner_id, cat, actor="worker", start=imp.date_min, end_exclusive=imp.date_max + timedelta(days=1)
+        )
+        from .cash import match_cash_withdrawals
+
+        cash = match_cash_withdrawals(
+            db, owner_id, cat, actor="worker", start=imp.date_min, end_exclusive=imp.date_max + timedelta(days=1)
+        )
         imp.counts = {
             **imp.counts,
+            "cash_withdrawals_linked": cash,
             "transfers_auto_confirmed": stats["auto_confirmed"],
             "transfers_suggested": stats["suggested"],
+            "loan_payments_recorded": loans["recorded"],
+            "loan_payments_suggested": loans["suggested"],
         }
     from .ai import schedule_auto_categorize
 
@@ -817,7 +831,7 @@ def delete_import(ctx: AppContext, db: Session, owner_id: uuid.UUID, imp: Import
                     other is not None
                     and other.id not in ids
                     and other.source.value == "MANUAL_DERIVED"
-                    and tr.reason == "loan_payment"
+                    and tr.reason in ("loan_payment", "cash_withdrawal", "shared_expense", "settlement")
                 ):
                     derived_ids.add(other.id)
             tr.status = TransferStatus.REJECTED

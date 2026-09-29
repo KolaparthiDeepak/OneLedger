@@ -159,7 +159,8 @@ def test_f08_emi_split_principal_interest(api):
         201,
     )
     import_csv(api, bank, csv_bytes(["05/08/2026,NACH SBI HOME LOAN EMI,,10000.00,,40000.00"]))
-    emi = txns(api)[0]
+    # Matched automatically with an estimated split; the lender's figures below replace the estimate.
+    emi = next(t for t in txns(api) if t["account"]["id"] == bank)
     api.ok(
         api.post(
             f"/loans/{loan['id']}/payments",
@@ -180,20 +181,9 @@ def test_f09_cash_withdrawal_then_cash_purchase(api):
     bank = account(api, "HDFC")
     cash = account(api, "Wallet cash", kind="CASH", opening_date="2026-07-31", opening_balance="0.00")
     import_csv(api, bank, csv_bytes(["04/08/2026,ATM CASH WDL,,2000.00,,1.00"]))
-    atm = txns(api)[0]
-    c = api.ok(
-        api.post(
-            "/transactions",
-            json={
-                "account_id": cash,
-                "amount": "2000.00",
-                "transaction_date": "2026-08-04",
-                "description": "Cash from ATM",
-            },
-        ),
-        201,
-    )
-    api.ok(api.post(f"/transactions/{atm['id']}/mark-transfer", json={"counterpart_transaction_id": c["id"]}))
+    # The withdrawal moved into the wallet automatically: a transfer, not spending.
+    atm = next(t for t in txns(api) if t["account"]["id"] == bank)
+    assert atm["is_transfer"]
     api.ok(
         api.post(
             "/transactions",
@@ -208,6 +198,8 @@ def test_f09_cash_withdrawal_then_cash_purchase(api):
     )
     s = summary(api, *AUG)
     assert Decimal(s["net_expenses"]) + Decimal(s["unclassified_outflow"]) == Decimal("300")
+    bal = {b["name"]: b for b in api.ok(api.get("/analytics/balances"))["data"]["accounts"]}
+    assert Decimal(bal["Wallet cash"]["balance"]) == Decimal("1700")
 
 
 def test_f10_split_must_sum_exactly(api):

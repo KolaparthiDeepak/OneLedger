@@ -1,11 +1,45 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { Amount, Button, Empty, ErrorNote, Field, Input, Loading, PageHeader, Panel, Select, Sheet } from "@/components/ui";
+import { useEffect, useState, type FormEvent } from "react";
+import { Donut } from "@/components/charts";
+import { ledgerChanged } from "@/components/quick-add";
+import { Amount, Button, cx, Empty, ErrorNote, Field, Input, Loading, PageHeader, Panel, Select, Sheet } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
-import { formatDate, todayISO } from "@/lib/format";
+import { formatDate, formatMoney, todayISO } from "@/lib/format";
+import { addMoney } from "@/lib/money";
 
-type Holding = { id: string; name: string; instrument_type: string; currency: string; valuation_mode: string; units: string | null; net_contributions: string; value: string | null; valued_on: string | null; unrealized_gain: string | null; gain_note: string | null; income: string };
+type Holding = { id: string; name: string; instrument_type: string; currency: string; valuation_mode: string; units: string | null; net_contributions: string; value: string | null; valued_on: string | null; valuation_source: string | null; unrealized_gain: string | null; gain_note: string | null; income: string; xirr_percent: string | null; instrument_identifier: string | null; funded_by_recurring: boolean };
+type Recurring = { id: string; label: string; type: string; typical_amount: string; cadence: string; state: string; tracked_as_holding: boolean; account_name: string | null };
+const TYPE_CODE: Record<string, string> = { MUTUAL_FUND: "FOOD", STOCK: "HOUSING", ETF: "SHOPPING", PPF: "TRANSPORT", NPS: "TRAVEL", FIXED_DEPOSIT: "ENTERTAINMENT", GOLD: "HEALTHCARE", BOND: "SUBSCRIPTIONS", REAL_ESTATE: "LOANS", OTHER: "OTHER" };
+
+function SipOffers({ onDone }: { onDone: () => void }) {
+  const { data } = useApi<Recurring[]>("/recurring");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const offers = (data ?? []).filter((r) => r.type === "SIP" && !r.tracked_as_holding && r.state !== "DISMISSED" && r.typical_amount.startsWith("-"));
+  if (!offers.length) return null;
+  return (
+    <Panel className="mb-6" title="Regular investments found in your statements">
+      <ul className="flex flex-col divide-y divide-rule">
+        {offers.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+            <span className="min-w-0">
+              <span className="block font-medium">{r.label}</span>
+              <span className="text-xs text-ink-faint"><span className="num">{formatMoney(r.typical_amount.replace("-", ""))}</span> {r.cadence.toLowerCase()}{r.account_name ? ` from ${r.account_name}` : ""}</span>
+            </span>
+            <Button size="sm" busy={busy === r.id} onClick={async () => {
+              setBusy(r.id);
+              setErr(null);
+              try { await api("/investments/from-recurring", { method: "POST", json: { recurring_id: r.id } }); ledgerChanged(); onDone(); } catch (x) { setErr(x); } finally { setBusy(null); }
+            }}>Track as a holding</Button>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-ink-faint">Each payment, past and future, becomes a contribution to the holding and stops counting as spending.</p>
+      {err ? <div className="mt-2"><ErrorNote error={err} /></div> : null}
+    </Panel>
+  );
+}
 type Resp = { items: Holding[]; totals: Record<string, { value: string; net_contributions: string }>; unvalued_count: number; note: string };
 const TYPES: Record<string, string> = { STOCK: "Stocks", MUTUAL_FUND: "Mutual fund", ETF: "ETF", PPF: "PPF", NPS: "NPS", FIXED_DEPOSIT: "Fixed deposit", GOLD: "Gold", BOND: "Bond", REAL_ESTATE: "Property", OTHER: "Other" };
 
@@ -17,16 +51,25 @@ export default function InvestmentsPage() {
   if (error) return <ErrorNote error={error} />;
   if (!data) return <Loading />;
   const t = data.totals.INR;
+  const byType: Record<string, string> = {};
+  for (const h of data.items) if (h.value) byType[h.instrument_type] = addMoney(byType[h.instrument_type], h.value);
+  const slices = Object.entries(byType).map(([k, v]) => ({ key: k, code: TYPE_CODE[k] ?? "OTHER", label: TYPES[k] ?? k, amount: v }));
   return (
     <>
-      <PageHeader title="Investments" description={data.note} actions={<Button variant="primary" onClick={() => setAdding(true)}>Add holding</Button>} />
+      <PageHeader title="Investments" description="Mutual funds can be priced from AMFI's public daily NAV list; everything else uses the values you record." actions={<Button variant="primary" onClick={() => setAdding(true)}>Add holding</Button>} />
+      <SipOffers onDone={() => mutate()} />
       {t ? (
         <Panel className="mb-6">
-          <div className="flex flex-wrap gap-8">
-            <div><p className="text-sm text-ink-soft">Latest value</p><Amount value={t.value} colored={false} signed={false} className="text-3xl font-semibold" /></div>
-            <div><p className="text-sm text-ink-soft">Net amount put in</p><Amount value={t.net_contributions} colored={false} signed={false} className="text-3xl font-semibold" /></div>
+          <div className="grid items-center gap-6 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <div>
+              <div className="flex flex-wrap gap-8">
+                <div><p className="text-sm text-ink-soft">Latest value</p><p className="display text-[2.1rem] font-medium leading-tight"><Amount value={t.value} colored={false} signed={false} /></p></div>
+                <div><p className="text-sm text-ink-soft">Net amount put in</p><p className="display text-[2.1rem] font-medium leading-tight"><Amount value={t.net_contributions} colored={false} signed={false} /></p></div>
+              </div>
+              {data.unvalued_count ? <p className="mt-2 text-sm text-review">{data.unvalued_count === 1 ? "1 holding has" : `${data.unvalued_count} holdings have`} no value yet and {data.unvalued_count === 1 ? "is" : "are"} not in the total.</p> : null}
+            </div>
+            {slices.length > 1 ? <div className="mx-auto w-full max-w-[180px]"><Donut slices={slices} total={t.value} caption="Allocation" /></div> : null}
           </div>
-          {data.unvalued_count ? <p className="mt-2 text-sm text-review">{data.unvalued_count} holding(s) have no valuation yet and are not in the total.</p> : null}
         </Panel>
       ) : null}
       {data.items.length === 0 ? <Empty title="No holdings yet" action={<Button variant="primary" onClick={() => setAdding(true)}>Add holding</Button>}>Add mutual funds, stocks, PPF, NPS, FDs or gold and record their value when you check it.</Empty> : (
@@ -36,13 +79,21 @@ export default function InvestmentsPage() {
               <li key={h.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <p className="font-medium">{h.name}</p>
-                  <p className="text-xs text-ink-faint">{TYPES[h.instrument_type]}{h.units ? `, ${h.units} units` : ""}{h.valued_on ? `, valued ${formatDate(h.valued_on)}` : ", no valuation yet"}</p>
+                  <p className="text-xs text-ink-faint">
+                    {TYPES[h.instrument_type]}{h.units ? `, ${Number(h.units).toLocaleString("en-IN", { maximumFractionDigits: 4 })} units` : ""}
+                    {h.valued_on ? `, valued ${formatDate(h.valued_on)}${h.valuation_source === "AMFI" ? " at AMFI NAV" : ""}` : ", no value yet"}
+                    {h.funded_by_recurring ? ", funded by a regular payment" : ""}
+                  </p>
                 </div>
                 <div className="text-right">
                   {h.value ? <Amount value={h.value} currency={h.currency} colored={false} signed={false} className="font-medium" /> : <span className="text-review">Not valued</span>}
-                  <p className="text-xs">{h.unrealized_gain ? <>Gain <Amount value={h.unrealized_gain} /></> : <span className="text-ink-faint">Gain unknown</span>}</p>
+                  <p className="text-xs">
+                    {h.unrealized_gain ? <>Gain <Amount value={h.unrealized_gain} /></> : <span className="text-ink-faint">Gain unknown</span>}
+                    {h.xirr_percent ? <span className={cx("ml-2", h.xirr_percent.startsWith("-") ? "text-debit" : "text-credit")} title="Annualised return (XIRR)">{h.xirr_percent}% a year</span> : null}
+                  </p>
                 </div>
-                <div className="flex w-full gap-2 sm:w-auto">
+                <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+                  {h.instrument_type === "MUTUAL_FUND" && h.instrument_identifier && h.valuation_mode === "UNITS" ? <PriceButton h={h} onDone={() => mutate()} /> : null}
                   <Button size="sm" onClick={() => setValueFor(h)}>Update value</Button>
                   <Button size="sm" variant="ghost" onClick={() => setTxnFor(h)}>Add purchase or sale</Button>
                 </div>
@@ -58,15 +109,59 @@ export default function InvestmentsPage() {
   );
 }
 
+function PriceButton({ h, onDone }: { h: Holding; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <span className="inline-flex flex-col">
+      <Button size="sm" variant="primary" busy={busy} onClick={async () => {
+        setBusy(true);
+        setErr(null);
+        try { await api(`/investments/${h.id}/refresh-price`, { method: "POST" }); ledgerChanged(); onDone(); } catch (x) { setErr(x instanceof Error ? x.message : "Could not update"); } finally { setBusy(false); }
+      }}>Update price</Button>
+      {err ? <span className="mt-1 max-w-[16rem] text-xs text-debit">{err}</span> : null}
+    </span>
+  );
+}
+
+function FundSearch({ onPick }: { onPick: (f: { scheme_code: string; name: string }) => void }) {
+  const [q, setQ] = useState("");
+  const [term, setTerm] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setTerm(q.trim()), 350);
+    return () => clearTimeout(t);
+  }, [q]);
+  const { data, error, isLoading } = useApi<{ scheme_code: string; name: string; nav: string; nav_date: string }[]>(term.length >= 3 ? `/investments/fund-search?q=${encodeURIComponent(term)}` : null);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor="fund-q" className="text-sm font-medium text-ink-soft">Find the fund (AMFI list)</label>
+      <Input id="fund-q" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. parag parikh flexi direct growth" />
+      <p className="text-xs text-ink-faint">Downloads AMFI&apos;s public NAV list. Nothing about you is sent.</p>
+      {error ? <ErrorNote error={error} /> : isLoading ? <p className="text-xs text-ink-faint">Searching…</p> : data && term.length >= 3 ? (
+        data.length ? (
+          <ul className="max-h-48 overflow-y-auto rounded-lg border border-rule">
+            {data.map((f) => (
+              <li key={f.scheme_code}><button type="button" onClick={() => onPick(f)} className="w-full border-b border-rule px-3 py-2 text-left text-sm last:border-0 hover:bg-sunken">
+                {f.name}<span className="block text-xs text-ink-faint">Scheme {f.scheme_code}, NAV {f.nav} on {f.nav_date}</span>
+              </button></li>
+            ))}
+          </ul>
+        ) : <p className="text-xs text-ink-faint">No fund matches that name.</p>
+      ) : null}
+    </div>
+  );
+}
+
 function HoldingForm({ onDone }: { onDone: () => void }) {
-  const [f, setF] = useState({ name: "", instrument_type: "MUTUAL_FUND", identifier: "", valuation_mode: "MANUAL_TOTAL" });
+  const [f, setF] = useState({ name: "", instrument_type: "MUTUAL_FUND", identifier: "", valuation_mode: "UNITS" });
   const [err, setErr] = useState<unknown>(null);
   async function submit(e: FormEvent) { e.preventDefault(); try { await api("/investments", { method: "POST", json: { ...f, identifier: f.identifier || null } }); onDone(); } catch (e2) { setErr(e2); } }
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
+      <Field label="Type">{(id) => <Select id={id} value={f.instrument_type} onChange={(e) => setF({ ...f, instrument_type: e.target.value, valuation_mode: e.target.value === "MUTUAL_FUND" ? "UNITS" : "MANUAL_TOTAL" })}>{Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>}</Field>
+      {f.instrument_type === "MUTUAL_FUND" ? <FundSearch onPick={(x) => setF({ ...f, name: x.name.slice(0, 160), identifier: x.scheme_code })} /> : null}
       <Field label="Name">{(id) => <Input id={id} required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Parag Parikh Flexi Cap" />}</Field>
-      <Field label="Type">{(id) => <Select id={id} value={f.instrument_type} onChange={(e) => setF({ ...f, instrument_type: e.target.value })}>{Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>}</Field>
-      <Field label="ISIN, scheme code or ticker (optional)">{(id) => <Input id={id} value={f.identifier} onChange={(e) => setF({ ...f, identifier: e.target.value })} />}</Field>
+      <Field label="ISIN, scheme code or ticker (optional)" hint={f.instrument_type === "MUTUAL_FUND" ? "Needed to update the price from AMFI." : undefined}>{(id, d) => <Input id={id} aria-describedby={d} value={f.identifier} onChange={(e) => setF({ ...f, identifier: e.target.value })} />}</Field>
       <Field label="How do you track it?">{(id) => <Select id={id} value={f.valuation_mode} onChange={(e) => setF({ ...f, valuation_mode: e.target.value })}><option value="MANUAL_TOTAL">By total value</option><option value="UNITS">By units and price</option></Select>}</Field>
       {err ? <ErrorNote error={err} /> : null}
       <Button variant="primary" type="submit">Add holding</Button>

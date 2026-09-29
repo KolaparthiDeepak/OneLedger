@@ -27,6 +27,14 @@ from ..services.txn_query import serialize
 router = APIRouter(tags=["review"])
 
 
+@router.get("/review/counts")
+def review_counts(a: ReadAuth) -> dict[str, int]:
+    """Open review items by kind (for the menu badge)."""
+    from ..services.review import open_counts
+
+    return open_counts(a.db, a.owner_id)
+
+
 @router.get("/review")
 def list_review(
     a: ReadAuth, status: ReviewStatus = ReviewStatus.OPEN, kind: ReviewKind | None = None, limit: int = 100
@@ -142,7 +150,12 @@ def dismiss(review_id: uuid.UUID, a: WriteAuth) -> dict[str, str]:
     from ..services.audit import audit
 
     item = _review(a, review_id)
-    if item.kind not in (ReviewKind.RECONCILIATION, ReviewKind.SOURCE_REVISION, ReviewKind.CATEGORIZATION):
+    if item.kind not in (
+        ReviewKind.RECONCILIATION,
+        ReviewKind.SOURCE_REVISION,
+        ReviewKind.CATEGORIZATION,
+        ReviewKind.LOAN_PAYMENT_SUGGESTION,
+    ):
         raise ValidationFailed("Use the specific resolution action for this item.", code="USE_SPECIFIC_ACTION")
     item.status = ReviewStatus.DISMISSED
     item.resolution = "dismissed"
