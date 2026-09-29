@@ -200,3 +200,79 @@ def test_another_ledger_cannot_reach_your_people_templates_or_receipts(api, ctx,
         ).status_code
         == 404
     )
+
+
+def _assets(api) -> Decimal:  # type: ignore[no-untyped-def]
+    return Decimal(api.ok(api.get("/analytics/net-worth"))["data"]["totals"]["INR"]["assets"])
+
+
+def test_deleting_either_side_of_a_settlement_removes_both(api):
+    # A lent ₹2,000 recorded with "settle up" (you paid them), then deleted from the person's side
+    # to re-enter it: the bank payment used to stay behind and lower net worth by ₹2,000.
+    bank = account(api, "HDFC", opening_date="2026-07-31", opening_balance="10000.00")
+    sanjeev = _person(api, "Sanjeev")
+    for side in ("person", "bank"):
+        api.ok(
+            api.post(
+                f"/people/{sanjeev['id']}/settle",
+                json={"account_id": bank, "amount": "-2000", "transaction_date": "2026-08-11"},
+            ),
+            201,
+        )
+        assert _people(api)["Sanjeev"]["owes_you"] == "2000.00" and _assets(api) == 10000
+        pair = [t for t in txns(api) if "anjeev" in (t.get("description") or t.get("raw_description") or "")]
+        target = next(t for t in pair if (t["account"]["id"] == bank) == (side == "bank"))
+        assert api.delete(f"/transactions/{target['id']}").status_code == 204
+        assert _people(api)["Sanjeev"]["balance"] == "0.00", side
+        assert _assets(api) == 10000, side
+        assert not [t for t in txns(api) if "anjeev" in (t.get("description") or t.get("raw_description") or "")]
+
+
+def test_deleting_a_settlement_keeps_the_linked_statement_row(api):
+    bank = account(api, "HDFC", opening_date="2026-07-31", opening_balance="10000.00")
+    import_csv(api, bank, csv_bytes(["12/08/2026,UPI/PRIYA/2,2,,1000.00,11000.00"]))
+    credit = txns(api)[0]
+    priya = _person(api, "Priya")
+    api.ok(
+        api.post(
+            f"/people/{priya['id']}/settle",
+            json={
+                "account_id": bank,
+                "amount": "1000",
+                "transaction_date": "2026-08-12",
+                "transaction_id": credit["id"],
+            },
+        ),
+        201,
+    )
+    theirs = next(t for t in txns(api) if t["account"]["id"] != bank)
+    assert api.delete(f"/transactions/{theirs['id']}").status_code == 204
+    assert [t["id"] for t in txns(api)] == [credit["id"]]  # the statement row is evidence; it stays
+
+
+def test_net_worth_lists_what_people_owe_you_and_what_you_owe_them(api):
+    account(api, "HDFC", opening_date="2026-07-31", opening_balance="10000.00")
+    sanjeev, rahul = _person(api, "Sanjeev"), _person(api, "Rahul")
+    bank = next(a for a in api.ok(api.get("/accounts")) if a["name"] == "HDFC")["id"]
+    api.ok(
+        api.post(
+            f"/people/{sanjeev['id']}/settle",
+            json={"account_id": bank, "amount": "-2000", "transaction_date": "2026-08-11"},
+        ),
+        201,
+    )
+    api.ok(
+        api.post(
+            f"/people/{rahul['id']}/they-paid",
+            json={"amount": "450", "transaction_date": "2026-08-03", "description": "Movie snacks"},
+        ),
+        201,
+    )
+    data = api.ok(api.get("/analytics/net-worth"))["data"]
+    people = {c["label"]: c for c in data["components"] if c["kind"] == "PERSON"}
+    assert people["Sanjeev owes you"]["nature"] == "ASSET" and Decimal(people["Sanjeev owes you"]["value"]) == 2000
+    assert people["You owe Rahul"]["nature"] == "LIABILITY" and Decimal(people["You owe Rahul"]["value"]) == 450
+    assert not any(c["stale"] for c in people.values())  # exact balances, never "out of date"
+    t = data["totals"]["INR"]
+    assert Decimal(t["assets"]) == Decimal("8000") + 2000 and Decimal(t["liabilities"]) == 450
+    assert Decimal(t["net_worth"]) == Decimal("9550")

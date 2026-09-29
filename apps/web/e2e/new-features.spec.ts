@@ -151,3 +151,19 @@ test("phone: the + button opens Add; calendar fits the screen", async ({ page })
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test("phone alerts: switching them on gives a private ntfy topic", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings#phone");
+  const panel = page.locator("#phone");
+  // Point at a closed local port first, so the test never publishes to the real ntfy.sh.
+  await panel.getByText("Your own ntfy server, or a new topic").click();
+  await panel.getByLabel("ntfy server", { exact: true }).fill("http://localhost:9");
+  await panel.getByRole("button", { name: "Save" }).click();
+  // The switch is controlled by the saved setting, so click its label and wait for the server.
+  await panel.getByText("Send alerts to my phone").click();
+  await expect(panel.getByText(/^oneledger-[A-Za-z0-9_-]{20,}$/)).toBeVisible();
+  await expect(panel.getByRole("switch", { name: /Send alerts to my phone/ })).toBeChecked();
+  await panel.getByText("Send alerts to my phone").click();
+  await expect(panel.getByRole("switch", { name: /Send alerts to my phone/ })).not.toBeChecked();
+});

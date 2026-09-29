@@ -110,7 +110,7 @@ export function todayISO(): string {
 export const KIND_LABEL: Record<string, string> = {
   BANK_SAVINGS: "Savings", BANK_CURRENT: "Current", CASH: "Cash", WALLET: "Wallet", CREDIT_CARD: "Credit card",
   LOAN: "Loan", BROKERAGE: "Brokerage", INVESTMENT: "Investment", FIXED_DEPOSIT: "Fixed deposit",
-  OTHER_ASSET: "Other asset", OTHER_LIABILITY: "Other liability",
+  OTHER_ASSET: "Other asset", OTHER_LIABILITY: "Other liability", PERSON: "Shared with people",
 };
 
 export const EFFECT_LABEL: Record<string, string> = {

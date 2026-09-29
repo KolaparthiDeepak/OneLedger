@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/format";
 type Me = { email: string; display_name: string; timezone: string; mfa_enabled: boolean; mfa_required: boolean };
 type Session = { id: string; created_at: string; last_seen_at: string; user_agent: string | null; current: boolean };
 type AiProvider = { key: string; label: string; needs_key: boolean; default_model: string | null; key_hint: string; key_saved: boolean };
+type PhoneAlerts = { enabled: boolean; server_url: string; topic: string | null; subscribe_url: string | null; bills: boolean; alerts: boolean; show_amounts: boolean; quiet_hours: boolean; last_sent_at: string | null; last_error: string | null };
 type AiSettings = { server_enabled: boolean; provider: string; model: string; providers: AiProvider[]; auto_categorize: boolean; auto_categorize_ready: boolean; auto_categorize_error: { code: string; message: string; at: string } | null; assistant_enabled: boolean; classification_enabled: boolean; share_descriptions: boolean; opted_in_at: string | null; key: { configured: boolean; source: string | null; masked_suffix: string | null }; notice: string; version: number };
 
 export default function SettingsPage() {
@@ -15,14 +16,15 @@ export default function SettingsPage() {
   if (!me) return <Loading />;
   return (
     <>
-      <PageHeader title="Settings" description="Your sign-in and devices, your data, the optional AI assistant, and invites for other people's ledgers." />
+      <PageHeader title="Settings" description="Your sign-in and devices, phone alerts, your data, the optional AI assistant, and invites for other people's ledgers." />
       <nav aria-label="Settings sections" className="-mx-4 mb-6 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0">
-        {[["security", "Sign-in and security"], ["data", "Your data"], ["ai", "AI assistant"], ["people", "Invites"]].map(([id, label]) => (
+        {[["security", "Sign-in and security"], ["phone", "Phone alerts"], ["data", "Your data"], ["ai", "AI assistant"], ["people", "Invites"]].map(([id, label]) => (
           <a key={id} href={`#${id}`} className="shrink-0 rounded-full border border-rule bg-surface px-3 py-1 text-sm text-ink-soft hover:border-ink-faint hover:text-ink">{label}</a>
         ))}
       </nav>
       <div className="grid grid-cols-1 gap-6">
         <div id="security" className="scroll-mt-20"><Security me={me} /></div>
+        <div id="phone" className="scroll-mt-20"><PhoneAlertsPanel /></div>
         <div id="data" className="scroll-mt-20"><DataPanel /></div>
         <div id="ai" className="scroll-mt-20"><AiPanel /></div>
         <div id="people" className="scroll-mt-20"><People /></div>
@@ -229,6 +231,84 @@ function Security({ me }: { me: Me }) {
           );
         })}
       </ul>
+    </Panel>
+  );
+}
+
+function PhoneAlertsPanel() {
+  const { data: s, mutate } = useApi<PhoneAlerts>("/notifications/settings");
+  const [server, setServer] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!s) return <Panel title="Phone alerts"><Loading /></Panel>;
+  const status = s.last_error ? { label: "Not delivering", tone: "debit" as const } : s.enabled ? { label: "On", tone: "credit" as const } : { label: "Off", tone: "neutral" as const };
+
+  async function run(label: string, fn: () => Promise<unknown>) {
+    setBusy(label);
+    setErr(null);
+    setMsg(null);
+    try { await fn(); } catch (e) { setErr(e); } finally { setBusy(null); }
+  }
+  const put = (body: Partial<PhoneAlerts>) => run("put", async () => { await api("/notifications/settings", { method: "PUT", json: body }); await mutate(); });
+  async function copy(text: string) {
+    try { await navigator.clipboard.writeText(text); setMsg("Topic copied."); } catch { setMsg("Select the topic and copy it."); }
+  }
+
+  return (
+    <Panel title={<span className="flex items-center gap-2.5">Phone alerts <Badge tone={status.tone}>{status.label}</Badge></span>}>
+      <p className="-mt-1 mb-5 max-w-[70ch] text-sm text-ink-soft">Bills coming due and anything that needs attention, pushed to your phone through the free ntfy app, even when OneLedger is closed. Each alert arrives once; a bill rings again, at the highest priority, on the day it&apos;s due.</p>
+      {s.last_error ? (
+        <div role="alert" className="mb-5 rounded-xl border border-debit/30 bg-debit-wash p-4 text-sm">
+          <p className="font-medium text-debit">The last alert didn&apos;t go out</p>
+          <p className="mt-1 text-ink">{s.last_error} OneLedger keeps trying every minute.</p>
+        </div>
+      ) : null}
+      <div className="mb-5"><Switch label="Send alerts to my phone" hint="Needs the OneLedger worker running (make dev starts it)." checked={s.enabled} onChange={(v) => put({ enabled: v })} /></div>
+      <ol className={!s.enabled ? "opacity-60" : undefined}>
+        <Step n={1} title="Install ntfy on your phone" done={!!s.last_sent_at}>
+          <p className="text-sm text-ink-soft">Free, no account needed: <a className="underline underline-offset-4" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noreferrer">Android</a> or <a className="underline underline-offset-4" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noreferrer">iPhone</a>.</p>
+        </Step>
+        <Step n={2} title="Subscribe to your private topic" done={!!s.last_sent_at}>
+          {s.topic ? (
+            <>
+              <p className="mb-2 text-sm text-ink-soft">In ntfy, tap <b>+</b> and enter this topic{s.server_url !== "https://ntfy.sh" ? <> with the server <span className="num">{s.server_url}</span></> : null}. Anyone who knows it can read your alerts, so keep it to yourself.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="num min-w-0 select-all break-all rounded-lg bg-sunken px-3 py-2 text-sm">{s.topic}</code>
+                <Button size="sm" onClick={() => copy(s.topic!)}>Copy</Button>
+              </div>
+            </>
+          ) : <p className="text-sm text-ink-soft">Your topic appears here when you switch alerts on.</p>}
+        </Step>
+        <Step n={3} title="Choose what to send, then test it" done={!!s.last_sent_at}>
+          <div className="flex flex-col gap-3">
+            <Switch label="Bills" hint="Card bills, loan EMIs and confirmed recurring payments, 3 days before and on the day." checked={s.bills} onChange={(v) => put({ bills: v })} />
+            <Switch label="Other alerts" hint="Over or near a budget, unusual transactions, statements to import." checked={s.alerts} onChange={(v) => put({ alerts: v })} />
+            <Switch label="Show amounts and names" hint="Off: the alert only says a bill is due or something needs attention. Messages pass through the ntfy server." checked={s.show_amounts} onChange={(v) => put({ show_amounts: v })} />
+            <Switch label="Quiet at night" hint="Nothing between 22:00 and 07:00; alerts wait until morning." checked={s.quiet_hours} onChange={(v) => put({ quiet_hours: v })} />
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button busy={busy === "test"} onClick={() => run("test", async () => { await api("/notifications/test", { method: "POST" }); await mutate(); setMsg("Test alert sent. It should buzz your phone within a few seconds."); })}>Send a test alert</Button>
+            {s.last_sent_at ? <span className="text-xs text-ink-faint">Last sent {new Date(s.last_sent_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span> : null}
+          </div>
+          <p className="mt-3 max-w-[70ch] text-xs text-ink-faint">To make urgent alerts ring like an alarm, open this topic&apos;s settings in the ntfy app and pick a loud sound for urgent (priority 5) messages. On Android you can also let them sound during Do Not Disturb.</p>
+        </Step>
+      </ol>
+      <details className="mt-2 border-t border-rule pt-4 text-sm">
+        <summary className="cursor-pointer text-ink-soft">Your own ntfy server, or a new topic</summary>
+        <div className="mt-3 flex flex-col gap-4">
+          <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (server !== null) put({ server_url: server }).then(() => setServer(null)); }}>
+            <Field label="ntfy server">{(id) => <Input id={id} className="w-72" value={server ?? s.server_url} onChange={(e) => setServer(e.target.value)} />}</Field>
+            <Button type="submit" disabled={server === null || server === s.server_url} busy={busy === "put"}>Save</Button>
+          </form>
+          <div>
+            <Button variant="ghost" busy={busy === "topic"} onClick={() => run("topic", async () => { await api("/notifications/topic", { method: "POST" }); await mutate(); setMsg("New topic created. Subscribe to it in ntfy; the old one gets nothing more."); })}>Create a new topic</Button>
+            <p className="mt-1 text-xs text-ink-faint">Do this if someone else may have seen your topic. You&apos;ll need to subscribe again.</p>
+          </div>
+        </div>
+      </details>
+      {msg ? <p role="status" className="mt-4 text-sm text-credit">{msg}</p> : null}
+      {err ? <div className="mt-4"><ErrorNote error={err} /></div> : null}
     </Panel>
   );
 }

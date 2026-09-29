@@ -22,6 +22,7 @@ def register_routes(app: FastAPI) -> None:
         insights,
         internal,
         invites,
+        notifications,
         people,
         planning,
         products,
@@ -48,5 +49,6 @@ def register_routes(app: FastAPI) -> None:
         invites,
         entry,
         people,
+        notifications,
     ):
         app.include_router(module.router, prefix="/api/v1")

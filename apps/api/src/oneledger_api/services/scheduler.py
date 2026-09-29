@@ -32,7 +32,7 @@ def _owners(ctx: AppContext) -> list[uuid.UUID]:
 
 
 def plan(ctx: AppContext) -> dict[str, int]:
-    planned = {"maintenance": 0}
+    planned = {"maintenance": 0, "phone_alerts": 0}
     for owner_id in _owners(ctx):
         with owner_session(ctx.sessions, owner_id) as db:
             user = db.get(User, owner_id)
@@ -40,7 +40,21 @@ def plan(ctx: AppContext) -> dict[str, int]:
             day = today_in(tz)
             enqueue(db, owner_id, MAINTENANCE_JOB, {"day": day.isoformat()}, f"maintenance:{day.isoformat()}")
             planned["maintenance"] += 1
+        planned["phone_alerts"] += _phone_alerts(ctx, owner_id)
     return planned
+
+
+def _phone_alerts(ctx: AppContext, owner_id: uuid.UUID) -> int:
+    """Push new alerts to the owner's phone (ntfy). Runs every tick, so alerts arrive within a minute
+    or so; a failure is recorded on the settings and never stops the rest of the tick."""
+    from .notifications import check_and_send
+
+    try:
+        with owner_session(ctx.sessions, owner_id) as db:
+            return check_and_send(ctx, db, owner_id)
+    except Exception:
+        log.exception("phone alerts failed", extra={"event": "phone_alerts_error"})
+        return 0
 
 
 def tick(ctx: AppContext, budget_seconds: float) -> dict[str, Any]:

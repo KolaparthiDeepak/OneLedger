@@ -452,11 +452,46 @@ def soft_delete(db: Session, owner_id: uuid.UUID, txn: Transaction, actor: str) 
         )
     if txn.deleted_at is not None:
         return
-    unlink_for_transactions(db, owner_id, [txn.id], actor, reason="transaction_deleted")
-    txn.deleted_at = datetime.now(UTC)
-    txn.version += 1
+    partners = _paired_to_delete(db, owner_id, txn)
+    unlink_for_transactions(db, owner_id, [txn.id, *(p.id for p in partners)], actor, reason="transaction_deleted")
+    now = datetime.now(UTC)
+    for t in (txn, *partners):
+        t.deleted_at = now
+        t.version += 1
+        audit(db, owner_id, actor, "transaction.delete", "transaction", t.id, ["deleted_at"])
     bump_ledger_revision(db, owner_id)
-    audit(db, owner_id, actor, "transaction.delete", "transaction", txn.id, ["deleted_at"])
+
+
+def _paired_to_delete(db: Session, owner_id: uuid.UUID, txn: Transaction) -> list[Transaction]:
+    """The other side of a confirmed pair that only exists because of this one.
+
+    A derived counterpart (a person's side of a settlement, cash from an ATM withdrawal) and a manual
+    entry created in the same action (the payment "settle up" adds) go with it; deleting one side alone
+    left the other as a stray movement that changed balances and net worth. Imported rows never do.
+    """
+    from oneledger_db.models import Transfer, TransferLeg
+    from oneledger_domain.enums import TransferStatus
+
+    transfer_ids = select(TransferLeg.transfer_id).where(
+        TransferLeg.owner_id == owner_id, TransferLeg.transaction_id == txn.id, TransferLeg.is_active.is_(True)
+    )
+    others = db.scalars(
+        select(Transaction)
+        .join(TransferLeg, TransferLeg.transaction_id == Transaction.id)
+        .join(Transfer, Transfer.id == TransferLeg.transfer_id)
+        .where(
+            Transfer.id.in_(transfer_ids),
+            Transfer.status == TransferStatus.CONFIRMED,
+            TransferLeg.transaction_id != txn.id,
+            Transaction.deleted_at.is_(None),
+        )
+    ).unique()
+    return [
+        t
+        for t in others
+        if t.source == TransactionSourceKind.MANUAL_DERIVED
+        or (t.source == TransactionSourceKind.MANUAL and t.created_at == txn.created_at)
+    ]
 
 
 def restore(db: Session, owner_id: uuid.UUID, txn: Transaction, actor: str) -> None:
