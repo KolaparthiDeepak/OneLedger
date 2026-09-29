@@ -30,6 +30,7 @@ client, an operator mistake (wrong database, leaked logs).
 | Password and two-step sign-in | Change password needs the current one (and MFA when on) and signs out every other device; two-step sign-in can be turned off only with the password and a current code, and never where the server requires it | `routes/auth.py` |
 | Market prices | "Update price" downloads AMFI's public NAV file (no user data, no identifiers sent); the response is parsed as data and cached for six hours | `services/market.py` |
 | Full export | `GET /export/ledger.json` needs the admin scope and MFA when on; owner ids and encrypted blobs are left out | `routes/tokens.py` |
+| Phone alerts (ntfy) | Off until the owner turns them on. The topic is 24 random bytes, stored encrypted, readable only with a signed-in session (not API tokens), and can be replaced at any time. Messages carry a title, amount and link only; "Show amounts" off sends a generic text. The server URL must be https (http only for localhost); each alert is logged once in `notification_log` | `services/notifications.py`, `routes/notifications.py` |
 | Scheduler | Runner endpoint requires `SCHEDULER_SECRET`; job payloads carry IDs only | `routes/internal.py`, `services/jobs.py` |
 | Config | Startup fails on missing/short keys; in preview/production also on wildcard origins, insecure cookies, MFA off, or DB without TLS | `oneledger_shared/config.py` |
 

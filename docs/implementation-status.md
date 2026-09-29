@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 29 Sep 2026. Latest migration revision: `0012`.
+Last updated: 30 Sep 2026. Latest migration revision: `0013`.
 
 "Verified" means a test or command in this repository exercised it in this session.
 "Implemented" means the code exists but was not exercised end to end. "Unverified" means it
@@ -11,12 +11,12 @@ depends on infrastructure that was not available.
 | Check | Command | Result |
 |---|---|---|
 | Lint / format | `uv run ruff check . && uv run ruff format --check .` | pass (141 files) |
-| Types (Python, strict) | `uv run mypy apps/api/src packages` ; `uv run mypy apps/mcp/src` | pass (97 files) |
+| Types (Python, strict) | `uv run mypy apps/api/src packages` ; `uv run mypy apps/mcp/src` | pass (99 files) |
 | Types (web) | `cd apps/web && npx tsc --noEmit` | pass |
-| Backend tests (real PostgreSQL 15, runtime role with RLS) | `uv run pytest tests -q` | 171 passed |
+| Backend tests (real PostgreSQL 15, runtime role with RLS) | `uv run pytest tests -q` | 183 passed |
 | Migrations | `alembic downgrade base` then `upgrade head` on `oneledger_test` | pass |
 | Web production build | `npm run build` | pass (26 routes) |
-| Browser e2e (Playwright, Chromium) | `./scripts/e2e.sh` | 18 passed (first run + import/re-import, BFF checks, card matching, loan EMIs matched automatically + lender figures + prepayment simulation, rules dry-run, budgets/net worth/settings, delete import, tags + bulk categorise, invite a person, quick add with a sum + template, manual transfer, calendar, stats, sharing a bill, receipts, budget suggestions + alerts, password change, phone + button) |
+| Browser e2e (Playwright, Chromium) | `./scripts/e2e.sh` | 19 passed (phone alerts on/off, first run + import/re-import, BFF checks, card matching, loan EMIs matched automatically + lender figures + prepayment simulation, rules dry-run, budgets/net worth/settings, delete import, tags + bulk categorise, invite a person, quick add with a sum + template, manual transfer, calendar, stats, sharing a bill, receipts, budget suggestions + alerts, password change, phone + button) |
 | Backup + restore drill | `scripts/backup.sh`, `scripts/restore.sh` into an isolated DB | pass (66 txns, schema 0002) |
 | Key rotation | `tests/security/test_key_rotation.py` | pass |
 | Performance, 100,000 transactions, local laptop, warm | curl ×6 per endpoint | transaction page median 8–20 ms; yearly summary 48 ms; dashboard 145 ms (targets 500 ms / 1 s) |
@@ -107,6 +107,22 @@ installable web app (manifest and icons); three more read-only AI/MCP tools (upc
 spend, shared balances). Migration `0012` adds templates, attachments, people and alert dismissals;
 `tests/security/test_rls_coverage.py` checks every owner table forces row-level security.
 
+## Additions (30 Sep 2026)
+
+- **Phone alerts through ntfy** (Settings → Phone alerts, migration `0013`). Bills (card bills, loan
+  EMIs, confirmed recurring payments) three days ahead and again on the day at urgent priority, plus the
+  in-app alerts, pushed to the free ntfy app within about a minute by the scheduler tick. Each alert is
+  sent once; quiet hours 22:00–07:00 hold them until morning; "Show amounts" off sends a generic text;
+  failures are shown in Settings and retried. The topic is random, encrypted, and replaceable
+  (`tests/integration/test_phone_alerts.py`).
+- **Deleting one side of a settlement removes both.** Deleting the person's side of a "settle up"
+  left the bank payment behind, lowering net worth; a derived counterpart, or a manual entry created in
+  the same action, is now deleted with it. Imported statement rows are never deleted
+  (`test_deleting_either_side_of_a_settlement_removes_both`).
+- **Net worth names what people owe.** "Sanjeev owes you" is listed under what you own and "You owe
+  Rahul" under what you owe (it used to be a negative asset); these balances are exact, so never "out of
+  date" (`test_net_worth_lists_what_people_owe_you_and_what_you_owe_them`).
+
 ## Known limitations
 
 - No bank connections: data comes only from imported statements and manual entries.
@@ -118,6 +134,9 @@ spend, shared balances). Migration `0012` adds templates, attachments, people an
 - The AI assistant has only been tested with a stubbed model and a fake HTTP transport; no live provider call has been made.
 - Remote (HTTP) MCP with OAuth is not implemented; MCP is local stdio.
 - No passkeys (WebAuthn) yet; sign-in is password plus optional TOTP.
+- Phone alerts need the worker running (`make dev` starts it) and go through ntfy.sh unless you run
+  your own ntfy server; there is no SMS. Unconfirmed recurring payments don't alert.
+- No self sign-up: new people join through invite links or `make owner`.
 - The installed web app has no service worker by design (financial data is never cached on the
   device), so it needs a connection.
 - Settling up links a statement credit through the API (`transaction_id`); the People screen adds

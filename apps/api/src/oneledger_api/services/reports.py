@@ -18,6 +18,7 @@ from oneledger_db.models import (
     BalanceSnapshot,
     Investment,
     InvestmentValuation,
+    Person,
     ReportQuery,
     ReviewItem,
     Transaction,
@@ -734,10 +735,22 @@ def net_worth_at(db: Session, owner_id: uuid.UUID, cutoff: date) -> tuple[nw.Net
         and (a.opening_date is None or a.opening_date <= cutoff)
     ]
     comps: list[nw.Component] = []
+    people = {
+        aid: name for aid, name in db.execute(select(Person.account_id, Person.name).where(Person.owner_id == owner_id))
+    }
     for b in account_balances(db, owner_id, cutoff, accounts):
         a = b.account
         # One canonical valuation owner: holdings accounts valued through their investments are not double counted.
         if a.id in covered and a.kind in (AccountKind.INVESTMENT, AccountKind.FIXED_DEPOSIT):
+            continue
+        if a.id in people and b.balance is not None:
+            # A person's balance is exact (the shares and settlements you recorded), never out of date:
+            # what they owe you is something you own; what you owe them is a debt.
+            name, owed = people[a.id], b.balance
+            obs = nw.Observation(abs(owed), cutoff, f"balance:{b.snapshot_id}")
+            nature = AccountNature.ASSET if owed >= 0 else AccountNature.LIABILITY
+            label = f"{name} owes you" if owed >= 0 else f"You owe {name}"
+            comps.append(nw.Component(f"account:{a.id}", label, nature, a.currency, "PERSON", obs))
             continue
         obs = (
             nw.Observation(b.balance, b.derived_through or cutoff, f"balance:{b.snapshot_id}")
