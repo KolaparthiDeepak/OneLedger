@@ -27,8 +27,8 @@ depends on infrastructure that was not available.
 |---|---|---|
 | P0.1 workspace, config validation, locks, lint/type/test, `.env.example`, status doc | Verified | uv workspace + `uv.lock`, `package-lock.json`, checks above |
 | P0.2 local stack + health + shell | Verified (without Docker) | `make dev`/local Postgres; `/api/health`, `/api/ready` |
-| P0.3 Vercel/Supabase configuration | Implemented, **unverified** | `vercel.json`, `api/index.py`, `infrastructure/deployment/supabase/*.sql`, `docs/deployment.md` |
-| P0.4 durable job survives crash / duplicate delivery; scheduled runner | Verified locally | `test_f12_*`, `test_f13_*`, `test_runner_requires_scheduler_secret`; hosted cron unverified |
+| P0.3 Vercel/Supabase configuration | Verified (deployed 1 Oct 2026) | oneledger-api / oneledger-web on Vercel (hnd1), Supabase `personal-apps`; `docs/deployment.md` |
+| P0.4 durable job survives crash / duplicate delivery; scheduled runner | Verified (local tests; hosted pg_cron tick runs maintenance) | `test_f12_*`, `test_f13_*`, `test_runner_requires_scheduler_secret`; Supabase `cron.job` `oneledger-runner` |
 | P0.5 semantics, RLS design, threat model | Verified | `docs/financial-semantics.md`, `docs/security.md`, RLS tests |
 | P1.1 auth, owner allowlist, MFA, private schema, RLS, audit, migrations | Verified | `test_isolation_auth.py`, e2e login |
 | P1.2 accounts, opening balances, categories, manual entries, allocations, revisions | Verified | `test_financial_scenarios.py` |
@@ -139,7 +139,7 @@ spend, shared balances). Migration `0012` adds templates, attachments, people an
 ## Known limitations
 
 - No bank connections: data comes only from imported statements and manual entries.
-- Hosted deployment (Vercel + Supabase + cron) and the Docker images were written but not run.
+- The Docker images were written but not run. The hosted deployment needs two SQL steps after every migration (`infrastructure/deployment/supabase/after_migrate_*.sql`).
 - On Vercel, uploads are capped near 4 MB by the platform request limit.
 - PDF import supports one verified template only; no OCR.
 - Cross-currency transfers and many-to-many transfer matching are manual; totals are per currency.
@@ -158,6 +158,6 @@ spend, shared balances). Migration `0012` adds templates, attachments, people an
 
 ## Next recommended steps
 
-1. Deploy to a Supabase + Vercel preview with synthetic data and record the P0.3/P0.4 hosted checks.
+1. Run the backup and restore drill against the hosted database.
 2. Supply an Anthropic key and run the P4.5 question set live; tune the system prompt.
 3. Add bank-specific import templates from your real (redacted) statement layouts.
