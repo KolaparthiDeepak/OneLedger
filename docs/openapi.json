@@ -4389,6 +4389,68 @@
         }
       }
     },
+    "/api/v1/imports/detect-account": {
+      "post": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Detect Account",
+        "description": "Suggest the account for a statement file before uploading it. The file is not kept.",
+        "operationId": "detect_account_api_v1_imports_detect_account_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_detect_account_api_v1_imports_detect_account_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Detect Account Api V1 Imports Detect Account Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/imports/{import_id}": {
       "get": {
         "tags": [
@@ -12038,6 +12100,20 @@
           "file"
         ],
         "title": "Body_add_attachment_api_v1_transactions__txn_id__attachments_post"
+      },
+      "Body_detect_account_api_v1_imports_detect_account_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_detect_account_api_v1_imports_detect_account_post"
       },
       "Body_upload_api_v1_imports_post": {
         "properties": {

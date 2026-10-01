@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 30 Sep 2026. Latest migration revision: `0013`.
+Last updated: 1 Oct 2026. Latest migration revision: `0013`.
 
 "Verified" means a test or command in this repository exercised it in this session.
 "Implemented" means the code exists but was not exercised end to end. "Unverified" means it
@@ -13,10 +13,10 @@ depends on infrastructure that was not available.
 | Lint / format | `uv run ruff check . && uv run ruff format --check .` | pass (141 files) |
 | Types (Python, strict) | `uv run mypy apps/api/src packages` ; `uv run mypy apps/mcp/src` | pass (99 files) |
 | Types (web) | `cd apps/web && npx tsc --noEmit` | pass |
-| Backend tests (real PostgreSQL 15, runtime role with RLS) | `uv run pytest tests -q` | 183 passed |
+| Backend tests (real PostgreSQL 15, runtime role with RLS) | `uv run pytest tests -q` | 190 passed |
 | Migrations | `alembic downgrade base` then `upgrade head` on `oneledger_test` | pass |
 | Web production build | `npm run build` | pass (26 routes) |
-| Browser e2e (Playwright, Chromium) | `./scripts/e2e.sh` | 19 passed (phone alerts on/off, first run + import/re-import, BFF checks, card matching, loan EMIs matched automatically + lender figures + prepayment simulation, rules dry-run, budgets/net worth/settings, delete import, tags + bulk categorise, invite a person, quick add with a sum + template, manual transfer, calendar, stats, sharing a bill, receipts, budget suggestions + alerts, password change, phone + button) |
+| Browser e2e (Playwright, Chromium) | `./scripts/e2e.sh` | 21 passed (account picked from a statement file, card billing dates from Add account, phone alerts on/off, first run + import/re-import, BFF checks, card matching, loan EMIs matched automatically + lender figures + prepayment simulation, rules dry-run, budgets/net worth/settings, delete import, tags + bulk categorise, invite a person, quick add with a sum + template, manual transfer, calendar, stats, sharing a bill, receipts, budget suggestions + alerts, password change, phone + button) |
 | Backup + restore drill | `scripts/backup.sh`, `scripts/restore.sh` into an isolated DB | pass (66 txns, schema 0002) |
 | Key rotation | `tests/security/test_key_rotation.py` | pass |
 | Performance, 100,000 transactions, local laptop, warm | curl ×6 per endpoint | transaction page median 8–20 ms; yearly summary 48 ms; dashboard 145 ms (targets 500 ms / 1 s) |
@@ -123,6 +123,19 @@ spend, shared balances). Migration `0012` adds templates, attachments, people an
   Rahul" under what you owe (it used to be a negative asset); these balances are exact, so never "out of
   date" (`test_net_worth_lists_what_people_owe_you_and_what_you_owe_them`).
 
+## Polish (1 Oct 2026)
+
+- **The import page suggests the account** from the file: a number ending above the transaction table
+  (never from transaction descriptions), the same columns as an earlier import, or a known bank layout with
+  one account at that bank. The file is read in memory and not kept (`POST /imports/detect-account`,
+  `tests/providers/test_account_detect.py`, `tests/integration/test_import_detect.py`).
+- **Adding a credit card from Accounts or onboarding asks for its billing dates** (statement day, days to
+  pay, limit), so card bills can be estimated and alerted without a statement.
+- **Forgot password** on the sign-in page explains the reset: `make reset-password EMAIL=…` (and
+  `make reset-mfa`) on the server; there are no reset emails.
+- **Shorter transaction list on phones:** two lines per row; the monogram, Recurring badge and tags
+  show from tablet width and in the transaction sheet (a month: about 3,200 px instead of 4,050).
+
 ## Known limitations
 
 - No bank connections: data comes only from imported statements and manual entries.
@@ -141,7 +154,6 @@ spend, shared balances). Migration `0012` adds templates, attachments, people an
   device), so it needs a connection.
 - Settling up links a statement credit through the API (`transaction_id`); the People screen adds
   settlements by hand.
-- Imports still need the account chosen by hand; the account is not detected from the file.
 - Mutual fund prices need the AMFI scheme code and units; other instruments use recorded values.
 
 ## Next recommended steps

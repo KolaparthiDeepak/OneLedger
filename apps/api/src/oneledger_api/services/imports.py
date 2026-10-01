@@ -30,6 +30,7 @@ from oneledger_db.models import (
 from oneledger_domain.dedup import Candidate, Decision, Existing, detect_duplicates, fingerprint
 from oneledger_domain.enums import (
     AccountNature,
+    AccountStatus,
     BalanceKind,
     BalanceSource,
     ImportRowResolution,
@@ -41,6 +42,7 @@ from oneledger_domain.enums import (
 )
 from oneledger_domain.text import plural
 from oneledger_providers.imports import (
+    AccountHint,
     ColumnMapping,
     FileFormat,
     RawTable,
@@ -51,6 +53,7 @@ from oneledger_providers.imports import (
     parse_file,
     parser_version,
     preset_mapping,
+    suggest_account,
     suggest_mapping,
 )
 from oneledger_shared.crypto import sha256_hex
@@ -93,6 +96,43 @@ def get_import(db: Session, owner_id: uuid.UUID, import_id: uuid.UUID, *, lock: 
     if imp is None:
         raise NotFoundError()
     return imp
+
+
+def detect_account(db: Session, owner_id: uuid.UUID, data: bytes) -> dict[str, Any]:
+    """Which account a statement file probably belongs to. Reads the file in memory; stores nothing."""
+    from oneledger_db.models import FinancialInstitution
+
+    try:
+        table = parse_file(data, detect_format(data))
+    except UnsupportedFile:
+        return {"account_id": None, "reason": None}
+    accounts = db.execute(
+        select(Account, FinancialInstitution.name)
+        .outerjoin(FinancialInstitution, FinancialInstitution.id == Account.institution_id)
+        .where(Account.owner_id == owner_id, Account.deleted_at.is_(None), Account.status == AccountStatus.ACTIVE)
+    ).all()
+    previous: dict[uuid.UUID, set[tuple[str, ...]]] = {}
+    for account_id, headers in db.execute(
+        select(Import.account_id, Import.headers).where(
+            Import.owner_id == owner_id, Import.state == ImportState.COMPLETED, Import.headers.is_not(None)
+        )
+    ):
+        previous.setdefault(account_id, set()).add(tuple(headers))
+    hints = [
+        AccountHint(
+            a.id,
+            a.name,
+            a.kind.value,
+            a.masked_identifier[-4:] if a.masked_identifier and a.masked_identifier[-4:].isdigit() else None,
+            inst,
+            tuple(previous.get(a.id, ())),
+        )
+        for a, inst in accounts
+    ]
+    found = suggest_account(table, hints)
+    return (
+        {"account_id": str(found.account_id), "reason": found.reason} if found else {"account_id": None, "reason": None}
+    )
 
 
 def create_import(

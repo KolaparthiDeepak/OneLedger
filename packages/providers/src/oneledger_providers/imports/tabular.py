@@ -36,6 +36,9 @@ class RawTable:
     parser: str = ""
     parser_version: str = ""
     notes: list[str] = field(default_factory=list)
+    # Text above the transaction table (bank name, "Statement of account XXXX1234"). Used only to
+    # suggest which account the file belongs to; never stored.
+    preamble: list[str] = field(default_factory=list)
 
 
 def _clip(v: str) -> str:
@@ -74,7 +77,8 @@ def _finish(grid: list[tuple[int, list[str]]], parser: str, version: str, sheet:
     if len(data) > MAX_ROWS:
         raise UnsupportedFile("TOO_MANY_ROWS", f"The file has more than {MAX_ROWS} rows.")
     rows = [[_clip(r[i].strip()) if i < len(r) else "" for i in range(width)] for _, r in data]
-    return RawTable(headers, rows, [n for n, _ in data], header_no, sheet, parser, version)
+    preamble = [" ".join(c.strip() for c in r if c.strip())[:MAX_CELL_CHARS] for _, r in grid[:idx]]
+    return RawTable(headers, rows, [n for n, _ in data], header_no, sheet, parser, version, preamble=preamble)
 
 
 CSV_PARSER_VERSION = "csv-v1"

@@ -109,8 +109,8 @@ function CardForm({ onDone }: { onDone: () => void }) {
       <Field label="Issuer">{(id) => <Input id={id} required value={f.issuer} onChange={up("issuer")} />}</Field>
       <Field label="Card number" hint="Only the last four digits are kept.">{(id, d) => <Input id={id} aria-describedby={d} inputMode="numeric" autoComplete="off" value={f.card_number} onChange={up("card_number")} />}</Field>
       <Field label="Credit limit">{(id) => <Input id={id} inputMode="decimal" value={f.credit_limit} onChange={up("credit_limit")} />}</Field>
-      <Field label="Statement day of month">{(id) => <Input id={id} inputMode="numeric" value={f.statement_day} onChange={up("statement_day")} />}</Field>
-      <Field label="Days to pay after statement">{(id) => <Input id={id} inputMode="numeric" value={f.payment_due_days} onChange={up("payment_due_days")} />}</Field>
+      <Field label="Statement day of month" hint="From any statement: the day the billing cycle closes. Used for bill reminders.">{(id, d) => <Input id={id} aria-describedby={d} inputMode="numeric" placeholder="e.g. 12" value={f.statement_day} onChange={up("statement_day")} />}</Field>
+      <Field label="Days to pay after statement" hint="Usually 18 to 20.">{(id, d) => <Input id={id} aria-describedby={d} inputMode="numeric" value={f.payment_due_days} onChange={up("payment_due_days")} />}</Field>
       <Field label="Currently owed">{(id) => <Input id={id} inputMode="decimal" value={f.outstanding} onChange={up("outstanding")} />}</Field>
       <Field label="As of">{(id) => <Input id={id} type="date" value={f.outstanding_as_of} onChange={up("outstanding_as_of")} />}</Field>
       {err ? <div className="sm:col-span-2"><ErrorNote error={err} /></div> : null}

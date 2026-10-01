@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .account_detect import AccountHint, Suggestion, suggest_account
 from .detect import FileFormat, UnsupportedFile, detect_format
 from .mapping import ColumnMapping, NormalizedRow, detect_date_formats, normalize_table, suggest_mapping
 from .pdf_parser import PDF_PARSER_VERSION, parse_pdf
@@ -38,11 +39,13 @@ def parser_version(fmt: FileFormat) -> str:
 
 __all__ = [
     "PRESETS",
+    "AccountHint",
     "BankPreset",
     "ColumnMapping",
     "FileFormat",
     "NormalizedRow",
     "RawTable",
+    "Suggestion",
     "UnsupportedFile",
     "detect_date_formats",
     "detect_format",
@@ -55,5 +58,6 @@ __all__ = [
     "parse_xlsx",
     "parser_version",
     "preset_mapping",
+    "suggest_account",
     "suggest_mapping",
 ]

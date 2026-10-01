@@ -128,27 +128,29 @@ export function TxnList({ items, onOpen, compact, selected, onToggle, dayTotals 
     const uncategorised = t.allocations.some((a) => a.effect === "unclassified");
     const picking = !!onToggle;
     const inner = (
-      <div className="flex items-start gap-3 py-3">
+      // On a phone a row is two lines (name, then account and category) so a month stays short;
+      // the monogram, Recurring badge and tags show from the sm breakpoint and in the transaction sheet.
+      <div className="flex items-start gap-3 py-2.5 sm:py-3">
         {picking ? (
           <span aria-hidden className={cx("mt-1.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md border transition-colors", selected?.has(t.id) ? "border-ink bg-accent text-accent-ink" : "border-rule-strong bg-surface")}>
             {selected?.has(t.id) ? <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 10.5l3.2 3.2L15 7" /></svg> : null}
           </span>
-        ) : <Monogram t={t} />}
+        ) : <span className="hidden sm:block"><Monogram t={t} /></span>}
         <div className="min-w-0 flex-1">
           <p className={cx("line-clamp-2 break-words font-medium sm:line-clamp-1", t.deleted && "text-ink-faint line-through")}>{t.merchant ?? t.description}</p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-ink-faint">
+          <p className="mt-0.5 flex items-center gap-x-2.5 gap-y-1 overflow-hidden whitespace-nowrap text-[13px] text-ink-faint sm:flex-wrap sm:whitespace-normal">
             {compact ? <span>{formatDate(t.transaction_date, false)}</span> : null}
-            <span>{t.account.name}</span>
-            <span className={cx("inline-flex items-center gap-1.5", uncategorised && "font-medium text-review")}>
+            <span className="shrink-0">{t.account.name}</span>
+            <span className={cx("inline-flex min-w-0 items-center gap-1.5", uncategorised && "font-medium text-review")}>
               {!uncategorised && !t.is_split ? <span aria-hidden className="inline-block size-2 rounded-full" style={{ background: categoryColor(t.allocations[0]?.category?.code) }} /> : null}
-              {uncategorised ? "Not categorised" : categoryLabel(t)}
+              <span className="truncate">{uncategorised ? "Not categorised" : categoryLabel(t)}</span>
             </span>
             {t.is_transfer ? <Badge>Transfer</Badge> : null}
             {t.status === "PENDING" ? <Badge tone="review">Pending</Badge> : null}
             {t.needs_review ? <Badge tone="review">Review</Badge> : null}
             {t.anomaly ? <Badge tone="debit">Unusual</Badge> : null}
-            {t.recurring && !compact ? <Badge>Recurring</Badge> : null}
-            {t.tags.map((g) => <span key={g.id} className="rounded-full border border-rule px-2 text-xs leading-5 text-ink-soft">#{g.name}</span>)}
+            {t.recurring && !compact ? <span className="hidden sm:inline-flex"><Badge>Recurring</Badge></span> : null}
+            {t.tags.map((g) => <span key={g.id} className="hidden rounded-full border border-rule px-2 text-xs leading-5 text-ink-soft sm:inline">#{g.name}</span>)}
           </p>
         </div>
         <Amount value={t.amount} currency={t.currency} className="shrink-0 pt-px font-medium" colored={!t.is_transfer} />

@@ -27,6 +27,26 @@ function Upload() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [showOld, setShowOld] = useState(false);
+  // Set when OneLedger picked the account from the file; cleared when you choose one yourself.
+  const [detected, setDetected] = useState<{ id: string; reason: string } | null>(null);
+  const [picked, setPicked] = useState(!!params.get("account"));
+
+  async function choose(f: File | null) {
+    setFile(f);
+    setDetected(null);
+    if (!f || picked) return;
+    try {
+      const fd = new FormData();
+      fd.set("file", f);
+      const r = await api<{ account_id: string | null; reason: string | null }>("/imports/detect-account", { method: "POST", body: fd });
+      if (r.account_id && r.reason) {
+        setAccount(r.account_id);
+        setDetected({ id: r.account_id, reason: r.reason });
+      }
+    } catch {
+      // A suggestion is optional; the account can always be chosen by hand.
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -52,7 +72,7 @@ function Upload() {
       <Panel>
         <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1.4fr_auto] sm:items-end">
           <Field label="Account">{(id) => (
-            <Select id={id} required value={account} onChange={(e) => setAccount(e.target.value)}>
+            <Select id={id} required value={account} onChange={(e) => { setAccount(e.target.value); setPicked(true); setDetected(null); }}>
               <option value="">Choose an account…</option>
               {accounts?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
@@ -61,17 +81,20 @@ function Upload() {
             <label htmlFor={id}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
-              onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) setFile(f); }}
+              onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) choose(f); }}
               className={cx("flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border border-dashed px-3 py-2 text-sm transition-colors", dragging ? "border-ink bg-accent-wash" : file ? "border-credit/50 bg-credit-wash/60" : "border-rule-strong hover:border-ink-faint hover:bg-raised")}>
               <Icon name="import" className={cx("size-[18px] shrink-0", file ? "text-credit" : "text-ink-faint")} />
               <span className="min-w-0 flex-1 truncate">{file ? <span className="font-medium">{file.name}</span> : <span className="text-ink-soft">Choose a file or drop it here</span>}</span>
               {file ? <span className="num shrink-0 text-xs text-ink-faint">{(file.size / 1024).toFixed(0)} KB</span> : null}
-              <input id={id} required type="file" accept=".csv,.txt,.xls,.xlsx,.pdf" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <input id={id} required type="file" accept=".csv,.txt,.xls,.xlsx,.pdf" className="sr-only" onChange={(e) => choose(e.target.files?.[0] ?? null)} />
             </label>
           )}</Field>
           <Button type="submit" variant="primary" busy={busy} disabled={!account || !file}>Upload</Button>
         </form>
-        <p className="mt-3 text-xs text-ink-faint">CSV, Excel (.xls, .xlsx) or text PDF, up to 20 MB. Password-protected PDFs and scanned images are not supported.</p>
+        {detected && detected.id === account ? (
+          <p role="status" className="mt-3 text-sm text-credit">Account chosen from the file: {detected.reason} Change it above if that&apos;s wrong.</p>
+        ) : null}
+        <p className="mt-3 text-xs text-ink-faint">CSV, Excel (.xls, .xlsx) or text PDF, up to 20 MB. Password-protected PDFs and scanned images are not supported. Pick the file first and OneLedger suggests the account.</p>
         {err ? <div className="mt-3"><ErrorNote error={err} /></div> : null}
       </Panel>
       <div className="mb-3 mt-10 flex items-baseline justify-between gap-3">
