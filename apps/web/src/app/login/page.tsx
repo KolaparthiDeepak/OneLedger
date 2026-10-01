@@ -25,14 +25,16 @@ function LoginForm() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = (await res.json()) as { mfa_required?: boolean; error?: { message?: string } };
+      const data = (await res.json()) as { mfa_required?: boolean; mfa_enrolled?: boolean; error?: { message?: string } };
       if (!res.ok) {
         setError(data.error?.message ?? "Sign-in failed.");
         return;
       }
       const next = params.get("next");
       const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
-      router.replace(data.mfa_required ? `/verify?next=${encodeURIComponent(safeNext)}` : safeNext);
+      // A first sign-in on a server that requires two-step sign-in goes to setup (the key), not the code prompt.
+      const verify = data.mfa_enrolled === false ? "/verify?enrol=1&" : "/verify?";
+      router.replace(data.mfa_required ? `${verify}next=${encodeURIComponent(safeNext)}` : safeNext);
     } catch {
       setError("Could not reach OneLedger. Check that the API is running.");
     } finally {
