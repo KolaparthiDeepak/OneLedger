@@ -194,3 +194,15 @@ test("adding a credit card as an account asks for its billing dates", async ({ p
   await page.goto("/cards");
   await expect(page.getByText(/Statement on day 12 of each month, due 18 days later/)).toBeVisible();
 });
+
+test("two-step setup shows a QR code and the key", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings#security");
+  await page.getByRole("button", { name: "Turn on two-step sign-in" }).click();
+  const qr = page.getByRole("img", { name: /QR code to add OneLedger/ });
+  await expect(qr).toBeVisible();
+  expect(await qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+  await expect(page.getByText(/Can.t scan\? Enter this key/)).toBeVisible();
+  if (process.env.SHOT_DIR) await page.locator("form", { has: qr }).screenshot({ path: `${process.env.SHOT_DIR}/totp-settings.png` });
+  await page.getByRole("button", { name: "Cancel" }).click();
+});

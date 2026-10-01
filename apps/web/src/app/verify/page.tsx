@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { Mark } from "@/components/icons";
 import { api, ApiError } from "@/lib/api";
+import { TotpQr } from "@/components/totp-qr";
 import { Button, Field, Input } from "@/components/ui";
 
 function Verify() {
@@ -38,8 +39,14 @@ function Verify() {
     <form onSubmit={submit} className="flex flex-col gap-4">
       {enrol ? (
         <div className="text-sm text-ink-soft">
-          <p>This deployment requires two-step verification. Add OneLedger to your authenticator app with this key, then enter the 6-digit code.</p>
-          {secret ? <p className="num mt-3 break-all rounded-md bg-sunken p-3 font-medium text-ink">{secret.secret}</p> : null}
+          <p>This OneLedger requires two-step sign-in. In your authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) tap <b>+</b>, scan this code, then enter the 6-digit code it shows.</p>
+          {secret ? (
+            <>
+              <div className="mt-4 flex justify-center"><TotpQr uri={secret.otpauth_uri} /></div>
+              <p className="mt-4">Can&apos;t scan? Choose &ldquo;Enter a setup key&rdquo;, name it OneLedger, pick &ldquo;Time based&rdquo; and type this key:</p>
+              <p className="num mt-2 select-all break-all rounded-md bg-sunken p-3 font-medium text-ink">{secret.secret}</p>
+            </>
+          ) : null}
         </div>
       ) : (
         <p className="text-sm text-ink-soft">Enter the 6-digit code from your authenticator app.</p>

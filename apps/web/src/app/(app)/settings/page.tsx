@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Badge, Button, ErrorNote, Field, Input, Loading, PageHeader, Panel, Select } from "@/components/ui";
+import { TotpQr } from "@/components/totp-qr";
 import { api, ApiError, useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
@@ -174,7 +175,9 @@ function TwoStep({ me, onChanged }: { me: Me; onChanged: () => void }) {
         <Button className="self-start" busy={busy} onClick={() => run(async () => setEnrol(await api<{ secret: string; otpauth_uri: string }>("/auth/mfa/enroll", { method: "POST" })))}>Turn on two-step sign-in</Button>
       ) : (
         <form className="flex flex-col gap-3 rounded-xl border border-rule bg-raised p-4" onSubmit={(e) => { e.preventDefault(); void run(async () => { await api("/auth/mfa/enroll/confirm", { method: "POST", json: { code } }); setEnrol(null); setCode(""); onChanged(); }); }}>
-          <p className="text-sm">1. In your authenticator app, add an account with this key, or <a href={enrol.otpauth_uri} className="underline">open it in the app</a> on this device:</p>
+          <p className="text-sm">1. In your authenticator app, tap + and scan this code, or <a href={enrol.otpauth_uri} className="underline">open it in the app</a> on this device:</p>
+          <div><TotpQr uri={enrol.otpauth_uri} /></div>
+          <p className="text-xs text-ink-faint">Can&apos;t scan? Enter this key instead (time based):</p>
           <code className="select-all break-all rounded-lg bg-surface px-3 py-2 font-mono text-sm tracking-wider ring-1 ring-rule">{enrol.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
           <div className="flex flex-wrap items-end gap-3">
             <Field label="2. Enter the 6-digit code it shows">{(id) => <Input id={id} inputMode="numeric" autoComplete="one-time-code" required maxLength={8} className="w-40" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />}</Field>
