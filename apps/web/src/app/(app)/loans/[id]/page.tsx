@@ -184,12 +184,13 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
           <form className="grid grid-cols-2 gap-2" onSubmit={async (e) => { e.preventDefault(); setErr(null); try { setSimResult(await api<Sim>(`/loans/${id}/simulate-prepayment`, { method: "POST", json: sim })); } catch (e2) { setErr(e2); } }}>
             <Field label="Amount">{(fid) => <Input id={fid} required inputMode="decimal" value={sim.amount} onChange={(e) => setSim({ ...sim, amount: e.target.value })} />}</Field>
             <Field label="On">{(fid) => <Input id={fid} required type="date" value={sim.payment_date} onChange={(e) => setSim({ ...sim, payment_date: e.target.value })} />}</Field>
-            <Field label="Then">{(fid) => (
+            {/* On a phone the choice gets the full row so its wording isn't cut off. */}
+            <div className="col-span-2 sm:col-span-1"><Field label="Then">{(fid) => (
               <Select id={fid} value={sim.strategy} onChange={(e) => setSim({ ...sim, strategy: e.target.value })}>
                 <option value="REDUCE_TENURE">Keep EMI, finish sooner</option><option value="REDUCE_EMI">Keep tenure, lower EMI</option>
               </Select>
-            )}</Field>
-            <div className="flex items-end"><Button type="submit">Simulate</Button></div>
+            )}</Field></div>
+            <div className="col-span-2 flex items-end sm:col-span-1"><Button type="submit">Simulate</Button></div>
           </form>
           {simResult ? (
             <div className="mt-4 rounded-lg bg-credit-wash p-3 text-sm">
@@ -211,10 +212,11 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
         <Panel title="Projected schedule" className="mt-6" action={<span>{sched.rows.length} EMIs, {formatMoney(sched.total_interest, l.currency, { decimals: false })} interest</span>}>
           <p className="mb-2 text-xs text-ink-faint">{sched.assumptions.join(" ")}</p>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-sm">
-              <thead className="text-left text-ink-faint"><tr><th className="font-normal">#</th><th className="font-normal">Due</th><th className="text-right font-normal">EMI</th><th className="text-right font-normal">Interest</th><th className="text-right font-normal">Principal</th><th className="text-right font-normal">Left</th></tr></thead>
+            {/* On a phone the # and EMI columns (EMI is the same every month, shown above) give way to Principal and Left. */}
+            <table className="w-full text-[13px] sm:min-w-[520px] sm:text-sm">
+              <thead className="text-left text-ink-faint"><tr><th className="hidden font-normal sm:table-cell">#</th><th className="font-normal">Due</th><th className="hidden text-right font-normal sm:table-cell">EMI</th><th className="pl-2 text-right font-normal">Interest</th><th className="pl-2 text-right font-normal">Principal</th><th className="pl-2 text-right font-normal">Left</th></tr></thead>
               <tbody>{(showAll ? sched.rows : sched.rows.slice(0, 12)).map((r) => (
-                <tr key={r.period} className="border-t border-rule"><td className="num py-2 text-ink-faint">{r.period}</td><td>{formatDate(r.due_date)}</td><td className="num text-right">{formatMoney(r.emi)}</td><td className="num text-right">{formatMoney(r.interest)}</td><td className="num text-right">{formatMoney(r.principal)}</td><td className="num text-right font-medium">{formatMoney(r.closing)}</td></tr>
+                <tr key={r.period} className="border-t border-rule"><td className="num hidden py-2 text-ink-faint sm:table-cell">{r.period}</td><td className="whitespace-nowrap py-2">{formatDate(r.due_date)}</td><td className="num hidden pl-2 text-right sm:table-cell">{formatMoney(r.emi)}</td><td className="num pl-2 text-right">{formatMoney(r.interest)}</td><td className="num pl-2 text-right">{formatMoney(r.principal)}</td><td className="num pl-2 text-right font-medium">{formatMoney(r.closing)}</td></tr>
               ))}</tbody>
             </table>
           </div>

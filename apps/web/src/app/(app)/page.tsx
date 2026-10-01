@@ -11,7 +11,7 @@ import { useQuickAdd } from "@/components/quick-add-context";
 import { Amount, Button, ButtonLink, cx, Empty, ErrorNote, Loading, Meter, Panel, Provenance } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 import { moneyIn, negate, spent } from "@/lib/money";
-import { formatDate, formatMoney, formatMonth, KIND_LABEL, todayISO } from "@/lib/format";
+import { formatDate, formatMoney, formatMonth, KIND_LABEL, personLabel, todayISO } from "@/lib/format";
 import { shiftMonth } from "@/lib/period";
 
 type Prov = { query_id: string; start_date: string | null; end_date_exclusive: string | null; transaction_count: number; partial: boolean; warnings: string[]; evidence_url: string };
@@ -19,7 +19,7 @@ type Summary = { data: Record<string, string> & { income: string; net_expenses: 
 type Bill = { kind: string; id: string; label: string; date: string; amount: string; currency: string; estimated: boolean; overdue: boolean; confirmed?: boolean; href: string; detail: string };
 type Safe =
   | { available: false; reason: string; message: string }
-  | { available: true; currency: string; liquid_balance: string; until: string; until_label: string | null; days_left: number; obligations: { label: string; date: string; amount: string; kind: string }[]; obligations_total: string; safe_total: string; per_day: string; shortfall: boolean; assumptions: string[]; income_overdue?: boolean };
+  | { available: true; currency: string; liquid_balance: string; until: string; until_label: string | null; days_left: number; obligations: { label: string; date: string; amount: string; kind: string }[]; obligations_total: string; safe_total: string; per_day: string; shortfall: boolean; assumptions: string[]; income_overdue?: boolean; income_note?: string | null };
 type Budget = { id: string; name: string; spent: string; available: string; percent: string; over: boolean; currency: string };
 type Dashboard = {
   as_of: string;
@@ -29,7 +29,7 @@ type Dashboard = {
   comparison?: { start: string; end_exclusive: string; partial: boolean };
   categories: { data: { total: string; categories: { category_id: string | null; code: string | null; name: string; amount: string; share: string }[] }; provenance: Prov };
   monthly: { data: { months: { month: string; income: string; net_expenses: string; savings: string }[] } };
-  balances: { data: { accounts: { account_id: string; name: string; kind: string; nature: string; balance: string | null; derived_through: string | null; status: string; currency: string }[]; unknown_count: number }; provenance: Prov };
+  balances: { data: { accounts: { account_id: string; name: string; person_name: string | null; kind: string; nature: string; balance: string | null; derived_through: string | null; status: string; currency: string }[]; unknown_count: number }; provenance: Prov };
   net_worth: { data: { totals: Record<string, { net_worth: string; assets: string; liabilities: string }>; changes: Record<string, { available: boolean; delta: Record<string, string> }> }; provenance: Prov };
   review_counts: Record<string, number>;
   bills: Bill[];
@@ -109,8 +109,9 @@ function SafeToSpend({ s }: { s: Safe }) {
         </div>
       )}
       {s.assumptions.length ? (
-        <ul className={cx("mt-3 flex flex-col gap-1 text-xs", s.income_overdue ? "text-review" : "text-ink-soft")}>
-          {s.assumptions.map((a) => <li key={a}>{a}</li>)}
+        <ul className="mt-3 flex flex-col gap-1 text-xs text-ink-soft">
+          {/* Only the overdue-income note changes the figure enough to warrant the warning colour. */}
+          {s.assumptions.map((a) => <li key={a} className={a === s.income_note ? "font-medium text-review" : undefined}>{a}</li>)}
         </ul>
       ) : null}
       <details className="mt-3 text-sm">
@@ -326,13 +327,13 @@ function HomeInner() {
             <ul className="-my-1 flex flex-col">
               {accounts.slice(0, 6).map((a) => (
                 <li key={a.account_id} className="border-b border-rule last:border-0">
-                  <Link href={`/accounts/${a.account_id}`} className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 hover:bg-sunken/60">
+                  <Link href={a.person_name ? "/people" : `/accounts/${a.account_id}`} className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 hover:bg-sunken/60">
                     <span className="min-w-0">
-                      <span className="block truncate font-medium">{a.name}</span>
-                      <span className="text-xs text-ink-faint">{KIND_LABEL[a.kind]}{a.derived_through ? `, as of ${formatDate(a.derived_through, false)}` : ""}</span>
+                      <span className="block truncate font-medium">{a.person_name ? personLabel(a.person_name, a.balance) : a.name}</span>
+                      <span className="text-xs text-ink-faint">{a.person_name ? "Shared with people" : <>{KIND_LABEL[a.kind]}{a.derived_through ? `, as of ${formatDate(a.derived_through, false)}` : ""}</>}</span>
                     </span>
                     {a.balance === null ? <span className="shrink-0 text-sm text-review">Balance unknown</span>
-                      : <Amount className="shrink-0" value={a.nature === "LIABILITY" ? negate(a.balance) : a.balance} currency={a.currency} colored={a.nature === "LIABILITY"} signed={false} />}
+                      : <Amount className="shrink-0" value={a.nature === "LIABILITY" ? negate(a.balance) : a.balance} currency={a.currency} colored={a.nature === "LIABILITY" || (!!a.person_name && a.balance.startsWith("-"))} signed={false} absolute={!!a.person_name} />}
                   </Link>
                 </li>
               ))}

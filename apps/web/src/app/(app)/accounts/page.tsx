@@ -8,10 +8,10 @@ import { Icon } from "@/components/icons";
 import { ledgerChanged } from "@/components/quick-add";
 import { Amount, Button, Empty, ErrorNote, Loading, PageHeader, Panel, Sheet } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
-import { formatDate, KIND_LABEL, todayISO } from "@/lib/format";
+import { formatDate, KIND_LABEL, personLabel, todayISO } from "@/lib/format";
 import { addMoney, negate } from "@/lib/money";
 
-type Account = { id: string; name: string; kind: string; nature: string; currency: string; masked_identifier: string | null; institution: string | null; balance: string | null; balance_as_of: string | null; balance_stale: boolean; person_id: string | null };
+type Account = { id: string; name: string; kind: string; nature: string; currency: string; masked_identifier: string | null; institution: string | null; balance: string | null; balance_as_of: string | null; balance_stale: boolean; person_id: string | null; person_name: string | null };
 
 function CashWalletOffer({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -80,14 +80,14 @@ function Accounts() {
                     <li key={a.id} className="border-b border-rule last:border-0">
                       <Link href={a.person_id ? "/people" : `/accounts/${a.id}`} className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-sunken/50">
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{a.name}</p>
-                          <p className="text-xs text-ink-faint">{[KIND_LABEL[a.kind], a.institution, a.masked_identifier].filter(Boolean).join(", ")}</p>
+                          <p className="truncate font-medium">{a.person_name ? personLabel(a.person_name, a.balance) : a.name}</p>
+                          <p className="text-xs text-ink-faint">{a.person_name ? "Shared with people" : [KIND_LABEL[a.kind], a.institution, a.masked_identifier].filter(Boolean).join(", ")}</p>
                         </div>
                         <div className="text-right">
                           {a.balance === null ? <span className="text-sm text-review">Balance unknown</span> : (
                             <>
-                              <Amount value={a.nature === "LIABILITY" ? `-${a.balance}` : a.balance} currency={a.currency} colored={a.nature === "LIABILITY"} signed={false} className="font-medium" />
-                              {a.person_id ? <p className="text-xs text-ink-faint">{a.balance.startsWith("-") ? "you owe" : "owes you"}</p> : <p className={a.balance_stale ? "text-xs text-review" : "text-xs text-ink-faint"}>{a.nature === "LIABILITY" ? "owed, " : ""}as of {formatDate(a.balance_as_of, false)}</p>}
+                              <Amount value={a.nature === "LIABILITY" ? `-${a.balance}` : a.balance} currency={a.currency} colored={a.nature === "LIABILITY" || (!!a.person_id && a.balance.startsWith("-"))} signed={false} absolute={!!a.person_id} className="font-medium" />
+                              {a.person_id ? null : <p className={a.balance_stale ? "text-xs text-review" : "text-xs text-ink-faint"}>{a.nature === "LIABILITY" ? "owed, " : ""}as of {formatDate(a.balance_as_of, false)}</p>}
                             </>
                           )}
                         </div>

@@ -8,7 +8,7 @@ import { Icon } from "@/components/icons";
 import { useQuickAdd } from "@/components/quick-add-context";
 import { Amount, Button, cx, Empty, ErrorNote, Field, Input, Loading, PageHeader, Select } from "@/components/ui";
 import { api, ApiError, useApi } from "@/lib/api";
-import { formatDate, formatMoney, formatMonth, todayISO } from "@/lib/format";
+import { formatDate, formatMoney, formatMonth, shortINR, todayISO } from "@/lib/format";
 import { moneyIn, spent } from "@/lib/money";
 import { daysOf, periodFor, shiftMonth } from "@/lib/period";
 
@@ -384,8 +384,8 @@ function CalendarView({ params, onOpen }: { params: URLSearchParams; onOpen: (id
                 <span className={cx("num text-xs", d === today ? "inline-flex size-5 items-center justify-center self-start rounded-full bg-accent font-semibold text-accent-ink" : "text-ink-soft")}>{Number(d.slice(8))}</span>
                 {t ? (
                   <span className="num mt-auto flex flex-col text-right text-[10.5px] leading-tight sm:text-xs">
-                    {Number(t.money_in) ? <span className="truncate text-credit">{formatMoney(t.money_in, "INR", { decimals: false }).replace("₹", "")}</span> : null}
-                    {Number(t.spent) ? <span className="truncate text-debit">{formatMoney(t.spent, "INR", { decimals: false }).replace("₹", "")}</span> : null}
+                    {Number(t.money_in) ? <CellAmount value={t.money_in} className="text-credit" /> : null}
+                    {Number(t.spent) ? <CellAmount value={t.spent} className="text-debit" /> : null}
                   </span>
                 ) : null}
               </button>
@@ -405,4 +405,16 @@ function CalendarView({ params, onOpen }: { params: URLSearchParams; onOpen: (id
 
 export default function TransactionsPage() {
   return <Suspense fallback={<Loading />}><Explorer /></Suspense>;
+}
+
+/** A day's total in a calendar cell: the full figure where it fits, a short one (1.25L, 45.8k) on phones. */
+function CellAmount({ value, className }: { value: string; className: string }) {
+  const full = formatMoney(value, "INR", { decimals: false }).replace("₹", "");
+  if (Math.abs(Number(value)) < 1000) return <span className={cx("truncate", className)}>{full}</span>;
+  return (
+    <span className={cx("truncate", className)}>
+      <span className="sm:hidden">{shortINR(Number(value)).replace("₹", "")}</span>
+      <span className="hidden sm:inline">{full}</span>
+    </span>
+  );
 }

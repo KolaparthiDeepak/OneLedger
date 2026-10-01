@@ -276,3 +276,8 @@ def test_net_worth_lists_what_people_owe_you_and_what_you_owe_them(api):
     t = data["totals"]["INR"]
     assert Decimal(t["assets"]) == Decimal("8000") + 2000 and Decimal(t["liabilities"]) == 450
     assert Decimal(t["net_worth"]) == Decimal("9550")
+    # Accounts and the Home balances card name the person, so they can say "owes you" / "You owe" too.
+    names = {a["name"]: a["person_name"] for a in api.ok(api.get("/accounts"))}
+    assert names["HDFC"] is None and names["Sanjeev (shared)"] == "Sanjeev"
+    cards = {a["name"]: a for a in api.ok(api.get("/analytics/balances"))["data"]["accounts"]}
+    assert cards["Rahul (shared)"]["person_name"] == "Rahul" and cards["Rahul (shared)"]["balance"].startswith("-")

@@ -349,6 +349,7 @@ def safe_to_spend(db: Session, owner_id: uuid.UUID, today: date, currency: str) 
         "shortfall": r.shortfall,
         "assumptions": r.assumptions,
         "income_overdue": no_income_note is not None,
+        "income_note": no_income_note,
         "calculation_version": ss.SAFE_SPEND_VERSION,
     }
 
