@@ -93,13 +93,17 @@ def list_accounts(a: ReadAuth, include_archived: bool = False) -> list[dict[str,
     balances = {b.account.id: b for b in account_balances(a.db, a.owner_id, today_in(tz), [r[0] for r in rows])}
     from oneledger_db.models import Person
 
-    people = dict(
-        a.db.execute(select(Person.account_id, Person.id).where(Person.owner_id == a.owner_id)).tuples().all()
-    )
+    people = {
+        aid: (pid, name)
+        for aid, pid, name in a.db.execute(
+            select(Person.account_id, Person.id, Person.name).where(Person.owner_id == a.owner_id)
+        )
+    }
     out = []
     for acct, inst in rows:
         item = account_out(acct, inst)
-        item["person_id"] = str(people[acct.id]) if acct.id in people else None
+        item["person_id"] = str(people[acct.id][0]) if acct.id in people else None
+        item["person_name"] = people[acct.id][1] if acct.id in people else None
         b = balances.get(acct.id)
         item["balance"] = str(b.balance) if b and b.balance is not None else None
         item["balance_as_of"] = b.derived_through if b else None

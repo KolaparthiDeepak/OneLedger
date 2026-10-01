@@ -635,6 +635,9 @@ def balances_report(
         a for a in _accounts(db, owner_id, None) if a.status == AccountStatus.ACTIVE and (not kinds or a.kind in kinds)
     ]
     bals = account_balances(db, owner_id, as_of, accounts)
+    people = {
+        aid: name for aid, name in db.execute(select(Person.account_id, Person.name).where(Person.owner_id == owner_id))
+    }
     totals: dict[str, dict[str, Decimal]] = {}
     unknown = stale = 0
     items = []
@@ -643,6 +646,7 @@ def balances_report(
             {
                 "account_id": str(b.account.id),
                 "name": b.account.name,
+                "person_name": people.get(b.account.id),
                 "kind": b.account.kind.value,
                 "nature": b.account.kind.nature.value,
                 "currency": b.account.currency,
@@ -747,10 +751,10 @@ def net_worth_at(db: Session, owner_id: uuid.UUID, cutoff: date) -> tuple[nw.Net
             # A person's balance is exact (the shares and settlements you recorded), never out of date:
             # what they owe you is something you own; what you owe them is a debt.
             name, owed = people[a.id], b.balance
-            obs = nw.Observation(abs(owed), cutoff, f"balance:{b.snapshot_id}")
+            exact = nw.Observation(abs(owed), cutoff, f"balance:{b.snapshot_id}")
             nature = AccountNature.ASSET if owed >= 0 else AccountNature.LIABILITY
             label = f"{name} owes you" if owed >= 0 else f"You owe {name}"
-            comps.append(nw.Component(f"account:{a.id}", label, nature, a.currency, "PERSON", obs))
+            comps.append(nw.Component(f"account:{a.id}", label, nature, a.currency, "PERSON", exact))
             continue
         obs = (
             nw.Observation(b.balance, b.derived_through or cutoff, f"balance:{b.snapshot_id}")

@@ -215,6 +215,7 @@ def test_safe_to_spend_does_not_count_on_overdue_salary_or_cash_withdrawals(api)
     assert cash and all(b["kind"] == "cash" and "cash wallet" in b["detail"] for b in cash)
     safe = api.ok(api.get("/insights/safe-to-spend"))
     assert safe["available"] and safe["income_overdue"]
+    assert "hasn't arrived" in safe["income_note"] and safe["income_note"] in safe["assumptions"]
     assert safe["until_label"] is None and safe["days_left"] == 31
     assert not any("ATM" in o["label"] for o in safe["obligations"])
     assert any("hasn't arrived" in n for n in safe["assumptions"])

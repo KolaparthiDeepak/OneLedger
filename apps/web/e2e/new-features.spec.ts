@@ -150,6 +150,8 @@ test("phone: the + button opens Add; calendar fits the screen", async ({ page })
   await page.goto("/transactions?view=calendar&start_date=2026-08-01&end_date_exclusive=2026-09-01");
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
+  // Large day totals use short amounts on a phone instead of being cut off.
+  await expect(page.getByText("1.25L", { exact: true })).toBeVisible();
 });
 
 test("phone alerts: switching them on gives a private ntfy topic", async ({ page }) => {

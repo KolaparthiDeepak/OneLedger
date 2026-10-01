@@ -117,3 +117,8 @@ export const EFFECT_LABEL: Record<string, string> = {
   income: "Income", expense: "Expense", transfer: "Transfer", investment: "Investment",
   loan_principal: "Loan principal", adjustment: "Adjustment", unclassified: "Unclassified",
 };
+
+/** How a person's shared balance reads everywhere: "Priya owes you" or "You owe Priya". */
+export function personLabel(name: string, balance: string | null): string {
+  return balance?.trim().startsWith("-") ? `You owe ${name}` : `${name} owes you`;
+}

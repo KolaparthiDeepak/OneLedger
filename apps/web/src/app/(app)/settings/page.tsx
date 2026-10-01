@@ -426,7 +426,7 @@ function AiPanel() {
         <Step n={2} title="Pick a model" done={keyReady && !!s.model}>
           <Field label="Model" hint={current?.default_model ? `Default: ${current.default_model}. Load the list to choose another that supports tool calling.` : "Load the provider's models, then pick one that supports tool calling."}>{(id, d) => (
             <div className="flex flex-wrap gap-2">
-              <Input id={id} aria-describedby={d} list="ai-models" className="min-w-0 flex-1" value={model ?? s.model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. anthropic/claude-opus-5" />
+              <Input id={id} aria-describedby={d} list="ai-models" className="min-w-0 flex-1 basis-60" value={model ?? s.model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. anthropic/claude-opus-5" />
               <datalist id="ai-models">{models?.map((m) => <option key={m} value={m} />)}</datalist>
               <Button type="button" disabled={!keyReady} busy={busy === "models"} onClick={() => run("models", async () => { const r = await api<{ models: string[] }>("/ai/models"); setModels(r.models); setMsg(`${r.models.length} models available. Start typing in the Model box to pick one.`); })}>Load list</Button>
               <Button type="button" variant="primary" disabled={model === null || model === s.model || !model.trim()} busy={busy === "patch"} onClick={() => patch({ model: model!.trim() }).then(() => setModel(null))}>Use this model</Button>
