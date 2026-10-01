@@ -84,6 +84,22 @@ async def upload(
     return import_out(imp)
 
 
+@router.post("/imports/detect-account")
+async def detect_account(a: WriteAuth, file: Annotated[UploadFile, File()]) -> dict[str, Any]:
+    """Suggest the account for a statement file before uploading it. The file is not kept."""
+    if not hit(a.db, f"import-detect:{a.owner_id}", limit=120, window_seconds=3600):
+        from oneledger_shared.errors import RateLimited
+
+        raise RateLimited("Too many files checked. Try again later.")
+    limit = a.ctx.settings.max_upload_bytes
+    data = await file.read(limit + 1)
+    if len(data) > limit:
+        raise ValidationFailed(f"Files are limited to {limit // (1024 * 1024)} MiB.", code="FILE_TOO_LARGE")
+    out = svc.detect_account(a.db, a.owner_id, data)
+    a.commit()
+    return out
+
+
 @router.get("/imports/{import_id}")
 def get_import(import_id: uuid.UUID, a: ReadAuth) -> dict[str, Any]:
     imp = svc.get_import(a.db, a.owner_id, import_id)

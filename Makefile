@@ -5,7 +5,7 @@ PGPORT ?= 54329
 PGDATA := .data/pg
 ENV := set -a; [ -f .env ] && source .env; set +a;
 
-.PHONY: help setup db-start db-stop migrate owner token dev api worker web stop test test-api test-e2e lint typecheck build compose-up compose-down backup restore
+.PHONY: help setup db-start db-stop migrate owner reset-password reset-mfa token dev api worker web stop test test-api test-e2e lint typecheck build compose-up compose-down backup restore
 
 help:
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -30,6 +30,12 @@ migrate: ## Apply database migrations (uses MIGRATION_DATABASE_URL)
 
 owner: ## Create the owner account: make owner EMAIL=you@example.com NAME="Your name"
 	$(ENV) uv run oneledger-admin create-owner --email "$(EMAIL)" --name "$(or $(NAME),Owner)"
+
+reset-password: ## Set a new password for someone who forgot theirs: make reset-password EMAIL=you@example.com
+	$(ENV) uv run oneledger-admin reset-password --email "$(EMAIL)"
+
+reset-mfa: ## Turn off two-step sign-in for someone who lost their authenticator: make reset-mfa EMAIL=you@example.com
+	$(ENV) uv run oneledger-admin reset-mfa --email "$(EMAIL)"
 
 token: ## Read-only MCP token: make token EMAIL=you@example.com [DETAIL=1]
 	$(ENV) uv run oneledger-admin create-token --email "$(EMAIL)" --label "$(or $(LABEL),AI client)" $(if $(DETAIL),--detail,)

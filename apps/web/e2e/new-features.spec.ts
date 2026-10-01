@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 // Runs after money-flows.spec.ts on the same database (HDFC Savings with Jun–Aug data, a card, a loan,
@@ -168,4 +169,28 @@ test("phone alerts: switching them on gives a private ntfy topic", async ({ page
   await expect(panel.getByRole("switch", { name: /Send alerts to my phone/ })).toBeChecked();
   await panel.getByText("Send alerts to my phone").click();
   await expect(panel.getByRole("switch", { name: /Send alerts to my phone/ })).not.toBeChecked();
+});
+
+test("import: picking a statement file chooses its account", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/imports");
+  const file = path.resolve(__dirname, "../../../tests/fixtures/synthetic_hdfc_jun_aug_2026.csv");
+  await page.getByLabel("Statement file").setInputFiles(file);
+  await expect(page.getByRole("status").filter({ hasText: "Account chosen from the file" })).toContainText("ending 1234");
+  await expect(page.getByLabel("Account").locator("option:checked")).toHaveText("HDFC Savings");
+});
+
+test("adding a credit card as an account asks for its billing dates", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/accounts?new=1");
+  const sheet = page.getByRole("dialog");
+  await sheet.getByLabel("Name").fill("Amex Gold");
+  await sheet.getByLabel("Type").selectOption({ label: "Credit card" });
+  await sheet.getByLabel("Statement day of month").fill("12");
+  await sheet.getByLabel("Days to pay after statement").fill("18");
+  await sheet.getByRole("button", { name: "Add account" }).click();
+  // The billing dates are saved in a second request; the app opens the new account when both are done.
+  await page.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await page.goto("/cards");
+  await expect(page.getByText(/Statement on day 12 of each month, due 18 days later/)).toBeVisible();
 });

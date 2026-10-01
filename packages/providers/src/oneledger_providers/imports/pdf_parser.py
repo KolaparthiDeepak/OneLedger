@@ -224,6 +224,7 @@ def parse_pdf(data: bytes) -> RawTable:
         header_row_number=0,
         parser="pdf",
         parser_version=PDF_PARSER_VERSION,
+        preamble=[ln[:200] for ln in lines[: min(40, rows[0][0] - 1)]],
     )
     table.notes.append(f"template={template}")
     # Day/month order is confirmed by the user in the mapping step when ambiguous.

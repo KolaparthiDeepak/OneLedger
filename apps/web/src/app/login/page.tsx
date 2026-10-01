@@ -77,9 +77,17 @@ export default function LoginPage() {
         <Suspense>
           <LoginForm />
         </Suspense>
-        <p className="mt-7 border-t border-rule pt-4 text-xs leading-relaxed text-ink-faint">
-          New here? Ask someone who already uses this OneLedger for an invite link. There is no public sign-up.
-        </p>
+        <div className="mt-7 flex flex-col gap-2 border-t border-rule pt-4 text-xs leading-relaxed text-ink-faint">
+          <details className="group">
+            <summary className="cursor-pointer text-ink-soft hover:text-ink">Forgot your password?</summary>
+            <p className="mt-1.5">
+              OneLedger doesn&apos;t send reset emails. Ask whoever runs this OneLedger to set a new one; in the
+              OneLedger folder they run <code className="rounded bg-sunken px-1 text-ink-soft">make reset-password EMAIL=you@example.com</code>.
+              If you run it yourself, that&apos;s you. Lost your authenticator app? <code className="rounded bg-sunken px-1 text-ink-soft">make reset-mfa</code> works the same way.
+            </p>
+          </details>
+          <p>New here? Ask someone who already uses this OneLedger for an invite link. There is no public sign-up.</p>
+        </div>
       </div>
     </main>
   );
